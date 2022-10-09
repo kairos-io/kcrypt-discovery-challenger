@@ -1,0 +1,59 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.9.2
+  creationTimestamp: null
+  name: sealedvolumes.keyserver.kairos.io
+spec:
+  group: keyserver.kairos.io
+  names:
+    kind: SealedVolume
+    listKind: SealedVolumeList
+    plural: sealedvolumes
+    singular: sealedvolume
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: SealedVolume is the Schema for the sealedvolumes API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: SealedVolumeSpec defines the desired state of SealedVolume
+            properties:
+              TPMHash:
+                type: string
+              label:
+                type: string
+              passphraseRef:
+                properties:
+                  name:
+                    type: string
+                  path:
+                    type: string
+                type: object
+              quarantined:
+                type: boolean
+            type: object
+          status:
+            description: SealedVolumeStatus defines the observed state of SealedVolume
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
