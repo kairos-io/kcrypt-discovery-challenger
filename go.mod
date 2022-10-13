@@ -5,7 +5,7 @@ go 1.18
 require (
 	github.com/gorilla/websocket v1.5.0
 	github.com/jaypipes/ghw v0.9.0
-	github.com/kairos-io/go-tpm v0.0.0-20221007215323-700d855876c5
+	github.com/kairos-io/go-tpm v0.0.0-20221013145523-cc421fc8c33d
 	github.com/kairos-io/kairos v1.1.2
 	github.com/kairos-io/kcrypt v0.0.0-20221006145351-cabc24dc37a7
 	github.com/mudler/go-pluggable v0.0.0-20220716112424-189d463e3ff3
@@ -85,7 +85,6 @@ require (
 	github.com/pterm/pterm v0.12.41 // indirect
 	github.com/qeesung/image2ascii v1.0.1 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
-	github.com/sirupsen/logrus v1.8.1 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/wayneashleyberry/terminal-dimensions v1.1.0 // indirect
 	github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 // indirect

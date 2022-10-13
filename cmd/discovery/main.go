@@ -36,7 +36,7 @@ func start() error {
 	factory := pluggable.NewPluginFactory()
 
 	connectionDetails := &struct {
-		Server string
+		Server string `yaml:"challenger_server"`
 	}{}
 
 	var server string
@@ -52,6 +52,13 @@ func start() error {
 	// Input: bus.EventInstallPayload
 	// Expected output: map[string]string{}
 	factory.Add(bus.EventDiscoveryPassword, func(e *pluggable.Event) pluggable.EventResponse {
+
+		if server == "" {
+			return pluggable.EventResponse{
+				Error: "no server configured",
+			}
+		}
+
 		b := &block.Partition{}
 		err := json.Unmarshal([]byte(e.Data), b)
 		if err != nil {
