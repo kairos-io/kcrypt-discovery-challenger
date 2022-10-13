@@ -47,6 +47,7 @@ func writeRead(conn *websocket.Conn, input []byte) ([]byte, error) {
 }
 
 func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *controllers.SealedVolumeReconciler, namespace, address string) {
+	fmt.Println("Challenger started at", address)
 	s := http.Server{
 		Addr:         address,
 		ReadTimeout:  10 * time.Second,
@@ -79,6 +80,10 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 			}
 
 			hashEncoded, err := tpm.DecodePubHash(ek)
+			if err != nil {
+				fmt.Println("error decoding pubhash", err.Error())
+				return
+			}
 
 			found := false
 			var volume keyserverv1alpha1.SealedVolume
@@ -90,8 +95,12 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 			}
 
 			if !found {
-				fmt.Println("No TPM Hash found")
-				continue
+				fmt.Println("No TPM Hash found for", hashEncoded)
+				conn.Close()
+				//		conn.Close()
+				// return
+				continue //will iterate until a TPM is available
+
 			}
 
 			secret, challenge, err := tpm.GenerateChallenge(ek, at)
@@ -103,21 +112,22 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 			resp, _ := writeRead(conn, challenge)
 
 			if err := tpm.ValidateChallenge(secret, resp); err != nil {
-				fmt.Println("error validating challenge", err.Error())
+				fmt.Println("error validating challenge", err.Error(), string(resp))
 				return
 			}
 
 			writer, _ := conn.NextWriter(websocket.BinaryMessage)
 
 			if !volume.Spec.Quarantined {
-
 				secret, err := kclient.CoreV1().Secrets(namespace).Get(ctx, volume.Spec.Passphrase.Name, v1.GetOptions{})
 				if err == nil {
 					passphrase := secret.Data[volume.Spec.Passphrase.Path]
 					json.NewEncoder(writer).Encode(map[string]string{"passphrase": string(passphrase)})
 
 				}
-
+			} else {
+				conn.Close()
+				return
 			}
 		}
 	},
@@ -125,7 +135,13 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 
 	s.Handler = m
 
-	go s.ListenAndServe()
+	go func() {
+		err := s.ListenAndServe()
+		if err != nil {
+			panic(err)
+		}
+	}()
+
 	go func() {
 		<-ctx.Done()
 		s.Shutdown(ctx)

@@ -29,7 +29,7 @@ BUNDLE_METADATA_OPTS ?= $(BUNDLE_CHANNELS) $(BUNDLE_DEFAULT_CHANNEL)
 #
 # For example, running 'make bundle-build bundle-push catalog-build catalog-push' will build and push both
 # kairos.io/kcrypt-controller-bundle:$VERSION and kairos.io/kcrypt-controller-catalog:$VERSION.
-IMAGE_TAG_BASE ?= kairos.io/kcrypt-controller
+IMAGE_TAG_BASE ?= quay.io/kairos/kcrypt-controller
 
 # BUNDLE_IMG defines the image:tag used for the bundle.
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
@@ -126,7 +126,7 @@ docker-push: ## Push docker image with the manager.
 ##@ Deployment
 
 ifndef ignore-not-found
-  ignore-not-found = false
+  ignore-not-found = true
 endif
 
 .PHONY: install
@@ -233,3 +233,28 @@ catalog-build: opm ## Build a catalog image.
 .PHONY: catalog-push
 catalog-push: ## Push a catalog image.
 	$(MAKE) docker-push IMG=$(CATALOG_IMG)
+
+CLUSTER_NAME?="kairos-challenger-e2e"
+
+kind-setup:
+	kind create cluster --name ${CLUSTER_NAME} || true
+	$(MAKE) kind-setup-image
+
+kind-setup-image: docker-build
+	kind load docker-image --name $(CLUSTER_NAME) $(IMG)
+
+kind-prepare-tests: kind-setup install undeploy-dev deploy-dev
+
+.PHONY: deploy-dev
+deploy-dev: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
+	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
+	$(KUSTOMIZE) build config/dev | kubectl apply -f -
+
+.PHONY: undeploy-dev
+undeploy-dev: ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+	$(KUSTOMIZE) build config/dev | kubectl delete --ignore-not-found=$(ignore-not-found) -f -
+
+kubesplit: manifests kustomize
+	rm -rf helm-chart
+	mkdir helm-chart
+	$(KUSTOMIZE) build config/default | kubesplit -helm helm-chart
