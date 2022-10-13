@@ -89,8 +89,18 @@ func (in *SealedVolumeSpec) DeepCopyInto(out *SealedVolumeSpec) {
 	*out = *in
 	if in.Passphrase != nil {
 		in, out := &in.Passphrase, &out.Passphrase
-		*out = new(SecretSpec)
-		**out = **in
+		*out = make(map[string]*SecretSpec, len(*in))
+		for key, val := range *in {
+			var outVal *SecretSpec
+			if val == nil {
+				(*out)[key] = nil
+			} else {
+				in, out := &val, &outVal
+				*out = new(SecretSpec)
+				**out = **in
+			}
+			(*out)[key] = outVal
+		}
 	}
 }
 

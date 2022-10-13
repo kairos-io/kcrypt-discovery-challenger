@@ -87,10 +87,16 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 
 			found := false
 			var volume keyserverv1alpha1.SealedVolume
+			var passsecret *keyserverv1alpha1.SecretSpec
 			for _, v := range volumeList.Items {
-				if hashEncoded == v.Spec.TPMHash && v.Spec.Label == label {
-					found = true
-					volume = v
+				if hashEncoded == v.Spec.TPMHash {
+					for l, secretRef := range v.Spec.Passphrase {
+						if l == label {
+							found = true
+							volume = v
+							passsecret = secretRef
+						}
+					}
 				}
 			}
 
@@ -119,11 +125,10 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 			writer, _ := conn.NextWriter(websocket.BinaryMessage)
 
 			if !volume.Spec.Quarantined {
-				secret, err := kclient.CoreV1().Secrets(namespace).Get(ctx, volume.Spec.Passphrase.Name, v1.GetOptions{})
+				secret, err := kclient.CoreV1().Secrets(namespace).Get(ctx, passsecret.Name, v1.GetOptions{})
 				if err == nil {
-					passphrase := secret.Data[volume.Spec.Passphrase.Path]
+					passphrase := secret.Data[passsecret.Path]
 					json.NewEncoder(writer).Encode(map[string]string{"passphrase": string(passphrase)})
-
 				}
 			} else {
 				conn.Close()

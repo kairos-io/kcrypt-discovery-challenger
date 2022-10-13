@@ -15,8 +15,8 @@ metadata:
     namespace: default
 spec:
   TPMHash: "something"
-  label: "label"
-  passphraseRef: 
-   name: mysecret
-   path: pass
+  partitionSecrets:
+    LABEL:
+      name: mysecret
+      path: pass
   quarantined: false

@@ -25,10 +25,9 @@ import (
 
 // SealedVolumeSpec defines the desired state of SealedVolume
 type SealedVolumeSpec struct {
-	TPMHash     string      `json:"TPMHash,omitempty"`
-	Label       string      `json:"label,omitempty"`
-	Passphrase  *SecretSpec `json:"passphraseRef,omitempty"`
-	Quarantined bool        `json:"quarantined,omitempty"`
+	TPMHash     string                 `json:"TPMHash,omitempty"`
+	Passphrase  map[string]*SecretSpec `json:"partitionSecrets,omitempty"`
+	Quarantined bool                   `json:"quarantined,omitempty"`
 }
 
 type SecretSpec struct {
