@@ -52,14 +52,14 @@ func getPass(server, label string) (string, error) {
 func start() error {
 	factory := pluggable.NewPluginFactory()
 
-	connectionDetails := &struct {
+	connectionDetails := struct {
 		Server string `yaml:"challenger_server"`
 	}{}
 
 	var server string
 	d, err := machine.DotToYAML("/proc/cmdline")
 	if err == nil { // best-effort
-		yaml.Unmarshal(d, connectionDetails) //nolint:errcheck
+		yaml.Unmarshal(d, &connectionDetails) //nolint:errcheck
 	}
 	server = connectionDetails.Server
 	if os.Getenv("WSS_SERVER") != "" {
