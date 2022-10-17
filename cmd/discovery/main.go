@@ -31,6 +31,23 @@ func checkErr(err error) {
 	os.Exit(0)
 }
 
+func getPass(server, label string) (string, error) {
+	msg, err := tpm.Get(server, tpm.WithAdditionalHeader("label", label))
+	if err != nil {
+		return "", err
+	}
+	result := map[string]interface{}{}
+	err = json.Unmarshal(msg, &result)
+	if err != nil {
+		return "", err
+	}
+	p, ok := result["passphrase"]
+	if ok {
+		return fmt.Sprint(p), nil
+	}
+	return "", fmt.Errorf("pass for label not found")
+}
+
 // ❯ echo '{ "data": "{ \\"label\\": \\"LABEL\\" }"}' | sudo -E WSS_SERVER="http://localhost:8082/challenge" ./challenger "discovery.password"
 func start() error {
 	factory := pluggable.NewPluginFactory()
@@ -52,7 +69,6 @@ func start() error {
 	// Input: bus.EventInstallPayload
 	// Expected output: map[string]string{}
 	factory.Add(bus.EventDiscoveryPassword, func(e *pluggable.Event) pluggable.EventResponse {
-
 		if server == "" {
 			return pluggable.EventResponse{
 				Error: "no server configured",
@@ -67,28 +83,18 @@ func start() error {
 			}
 		}
 
-		msg, err := tpm.Get(server, tpm.WithAdditionalHeader("label", b.Label))
+		pass, err := getPass(server, b.Label)
 		if err != nil {
-			return pluggable.EventResponse{
-				Error: fmt.Sprintf("failed contacting from wss server: %s", err.Error()),
-			}
-		}
-		result := map[string]interface{}{}
-		err = json.Unmarshal(msg, &result)
-		if err != nil {
-			return pluggable.EventResponse{
-				Error: fmt.Sprintf("failed reading from wss server: %s", err.Error()),
-			}
-		}
-		p, ok := result["passphrase"]
-		if !ok {
-			return pluggable.EventResponse{
-				Error: "not found",
+			pass, err = getPass(server, b.Name)
+			if err != nil {
+				return pluggable.EventResponse{
+					Error: fmt.Sprintf("failed getting pass: %s", err.Error()),
+				}
 			}
 		}
 
 		return pluggable.EventResponse{
-			Data: fmt.Sprint(p),
+			Data: pass,
 		}
 	})
 

@@ -37,14 +37,14 @@ spec:
             properties:
               TPMHash:
                 type: string
-              label:
-                type: string
-              passphraseRef:
-                properties:
-                  name:
-                    type: string
-                  path:
-                    type: string
+              partitionSecrets:
+                additionalProperties:
+                  properties:
+                    name:
+                      type: string
+                    path:
+                      type: string
+                  type: object
                 type: object
               quarantined:
                 type: boolean
