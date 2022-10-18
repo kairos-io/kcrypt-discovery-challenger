@@ -26,5 +26,5 @@ REVISION: 1
 TEST SUITE: None
 
 # Installs challenger
-$ helm install kairos-challenger kairos/challenger
+$ helm install kairos-challenger kairos/kcrypt-challenger
 ```
