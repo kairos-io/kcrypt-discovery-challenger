@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/jaypipes/ghw/pkg/block"
 	"github.com/kairos-io/go-tpm"
@@ -31,6 +32,38 @@ func checkErr(err error) {
 	os.Exit(0)
 }
 
+func readServer() string {
+	connectionDetails := config{}
+
+	var server string
+	// best-effort
+	d, _ := machine.DotToYAML("/proc/cmdline")
+	yaml.Unmarshal(d, &connectionDetails) //nolint:errcheck
+
+	server = connectionDetails.Server
+	if os.Getenv("WSS_SERVER") != "" {
+		server = os.Getenv("WSS_SERVER")
+	}
+
+	return server
+}
+
+func waitPass(label string, attempts int) (pass string, err error) {
+	for tries := 0; tries < attempts; tries++ {
+		server := readServer()
+		if server == "" {
+			return "", fmt.Errorf("no server configured")
+		}
+
+		pass, err = getPass(server, label)
+		if pass != "" || err == nil {
+			return pass, err
+		}
+		time.Sleep(1 * time.Second)
+	}
+	return
+}
+
 func getPass(server, label string) (string, error) {
 	msg, err := tpm.Get(server, tpm.WithAdditionalHeader("label", label))
 	if err != nil {
@@ -48,33 +81,17 @@ func getPass(server, label string) (string, error) {
 	return "", fmt.Errorf("pass for label not found")
 }
 
+type config struct {
+	Server string `yaml:"challenger_server"`
+}
+
 // ❯ echo '{ "data": "{ \\"label\\": \\"LABEL\\" }"}' | sudo -E WSS_SERVER="http://localhost:8082/challenge" ./challenger "discovery.password"
 func start() error {
 	factory := pluggable.NewPluginFactory()
 
-	connectionDetails := struct {
-		Server string `yaml:"challenger_server"`
-	}{}
-
-	var server string
-
-	// best-effort
-	d, _ := machine.DotToYAML("/proc/cmdline")
-	yaml.Unmarshal(d, &connectionDetails) //nolint:errcheck
-
-	server = connectionDetails.Server
-	if os.Getenv("WSS_SERVER") != "" {
-		server = os.Getenv("WSS_SERVER")
-	}
-
 	// Input: bus.EventInstallPayload
 	// Expected output: map[string]string{}
 	factory.Add(bus.EventDiscoveryPassword, func(e *pluggable.Event) pluggable.EventResponse {
-		if server == "" {
-			return pluggable.EventResponse{
-				Error: "no server configured",
-			}
-		}
 
 		b := &block.Partition{}
 		err := json.Unmarshal([]byte(e.Data), b)
@@ -84,9 +101,10 @@ func start() error {
 			}
 		}
 
-		pass, err := getPass(server, b.Label)
+		// TODO: This should be 1 call, send both name and label to controller
+		pass, err := waitPass(b.Label, 30)
 		if err != nil {
-			pass, err = getPass(server, b.Name)
+			pass, err = waitPass(b.Name, 30)
 			if err != nil {
 				return pluggable.EventResponse{
 					Error: fmt.Sprintf("failed getting pass: %s", err.Error()),
