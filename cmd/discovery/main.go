@@ -57,10 +57,11 @@ func start() error {
 	}{}
 
 	var server string
-	d, err := machine.DotToYAML("/proc/cmdline")
-	if err == nil { // best-effort
-		yaml.Unmarshal(d, &connectionDetails) //nolint:errcheck
-	}
+
+	// best-effort
+	d, _ := machine.DotToYAML("/proc/cmdline")
+	yaml.Unmarshal(d, &connectionDetails) //nolint:errcheck
+
 	server = connectionDetails.Server
 	if os.Getenv("WSS_SERVER") != "" {
 		server = os.Getenv("WSS_SERVER")
