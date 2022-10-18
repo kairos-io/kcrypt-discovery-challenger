@@ -52,7 +52,8 @@ func waitPass(label string, attempts int) (pass string, err error) {
 	for tries := 0; tries < attempts; tries++ {
 		server := readServer()
 		if server == "" {
-			return "", fmt.Errorf("no server configured")
+			err = fmt.Errorf("no server configured")
+			continue
 		}
 
 		pass, err = getPass(server, label)
@@ -103,7 +104,7 @@ func start() error {
 
 		// TODO: This should be 1 call, send both name and label to controller
 		pass, err := waitPass(b.Label, 30)
-		if err != nil {
+		if err != nil || pass == "" {
 			pass, err = waitPass(b.Name, 30)
 			if err != nil {
 				return pluggable.EventResponse{
