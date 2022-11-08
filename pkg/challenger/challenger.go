@@ -71,6 +71,8 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 
 			token := r.Header.Get("Authorization")
 			label := r.Header.Get("label")
+			name := r.Header.Get("name")
+			uuid := r.Header.Get("uuid")
 			ek, at, err := tpm.GetAttestationData(token)
 			if err != nil {
 				fmt.Println("Failed getting tpm token")
@@ -91,6 +93,7 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 			for _, v := range volumeList.Items {
 				if hashEncoded == v.Spec.TPMHash {
 					for l, secretRef := range v.Spec.Passphrase {
+						// TODO: Try the rest of the data (name, mountpoint) if label is not found
 						if l == label {
 							found = true
 							volume = v
