@@ -19,6 +19,21 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// PassphraseRequestData is a struct that holds all the information needed in
+// order to lookup a passphrase for a specific tpm hash.
+type PassphraseRequestData struct {
+	TPMHash    string
+	Label      string
+	DeviceName string
+	UUID       string
+}
+
+type SealedVolumeData struct {
+	Quarantined bool
+	SecretName  string
+	SecretPath  string
+}
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
@@ -87,22 +102,14 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 				return
 			}
 
-			found := false
-			var volume keyserverv1alpha1.SealedVolume
-			var passsecret *keyserverv1alpha1.SecretSpec
-			for _, v := range volumeList.Items {
-				if hashEncoded == v.Spec.TPMHash {
-					for _, p := range v.Spec.Partitions {
-						if p.Label == label || p.DeviceName == name || p.UUID == uuid {
-							found = true
-							volume = v
-							passsecret = p.Secret
-						}
-					}
-				}
-			}
+			sealedVolumeData := findSecretFor(PassphraseRequestData{
+				TPMHash:    hashEncoded,
+				Label:      label,
+				DeviceName: name,
+				UUID:       uuid,
+			}, volumeList)
 
-			if !found {
+			if sealedVolumeData == nil {
 				fmt.Println("No TPM Hash found for", hashEncoded)
 				conn.Close()
 				return
@@ -123,10 +130,10 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 
 			writer, _ := conn.NextWriter(websocket.BinaryMessage)
 
-			if !volume.Spec.Quarantined {
-				secret, err := kclient.CoreV1().Secrets(namespace).Get(ctx, passsecret.Name, v1.GetOptions{})
+			if !sealedVolumeData.Quarantined {
+				secret, err := kclient.CoreV1().Secrets(namespace).Get(ctx, sealedVolumeData.SecretName, v1.GetOptions{})
 				if err == nil {
-					passphrase := secret.Data[passsecret.Path]
+					passphrase := secret.Data[sealedVolumeData.SecretPath]
 					json.NewEncoder(writer).Encode(map[string]string{"passphrase": string(passphrase)})
 				}
 			} else {
@@ -141,7 +148,7 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 
 	go func() {
 		err := s.ListenAndServe()
-		if err != nil {
+		if err != nil && err != http.ErrServerClosed {
 			panic(err)
 		}
 	}()
@@ -150,4 +157,22 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 		<-ctx.Done()
 		s.Shutdown(ctx)
 	}()
+}
+
+func findSecretFor(requestData PassphraseRequestData, volumeList *keyserverv1alpha1.SealedVolumeList) *SealedVolumeData {
+	for _, v := range volumeList.Items {
+		if requestData.TPMHash == v.Spec.TPMHash {
+			for _, p := range v.Spec.Partitions {
+				if p.Label == requestData.Label || p.DeviceName == requestData.DeviceName || p.UUID == requestData.UUID {
+					return &SealedVolumeData{
+						Quarantined: v.Spec.Quarantined,
+						SecretName:  p.Secret.Name,
+						SecretPath:  p.Secret.Path,
+					}
+				}
+			}
+		}
+	}
+
+	return nil
 }
