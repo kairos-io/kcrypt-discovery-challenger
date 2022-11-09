@@ -92,12 +92,11 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 			var passsecret *keyserverv1alpha1.SecretSpec
 			for _, v := range volumeList.Items {
 				if hashEncoded == v.Spec.TPMHash {
-					for l, secretRef := range v.Spec.Passphrase {
-						// TODO: Try the rest of the data (name, mountpoint) if label is not found
-						if l == label {
+					for _, p := range v.Spec.Partitions {
+						if p.Label == label || p.DeviceName == name || p.UUID == uuid {
 							found = true
 							volume = v
-							passsecret = secretRef
+							passsecret = p.Secret
 						}
 					}
 				}
