@@ -105,10 +105,7 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 			if !found {
 				fmt.Println("No TPM Hash found for", hashEncoded)
 				conn.Close()
-				//		conn.Close()
-				// return
-				continue //will iterate until a TPM is available
-
+				return
 			}
 
 			secret, challenge, err := tpm.GenerateChallenge(ek, at)
