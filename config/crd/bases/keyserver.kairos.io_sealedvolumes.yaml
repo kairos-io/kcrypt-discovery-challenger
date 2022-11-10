@@ -56,11 +56,6 @@ spec:
                       type: object
                     uuid:
                       type: string
-                  required:
-                  - deviceName
-                  - label
-                  - secret
-                  - uuid
                   type: object
                 type: array
               quarantined:

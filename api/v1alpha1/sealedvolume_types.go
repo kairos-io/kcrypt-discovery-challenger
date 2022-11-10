@@ -34,10 +34,10 @@ type SealedVolumeSpec struct {
 // any of the fields: Label, DeviceName, UUID. The Secret defines the secret
 // which decrypts the partition.
 type PartitionSpec struct {
-	Label      string      `json:"label"`
-	DeviceName string      `json:"deviceName"`
-	UUID       string      `json:"uuid"`
-	Secret     *SecretSpec `json:"secret"`
+	Label      string      `json:"label,omitempty"`
+	DeviceName string      `json:"deviceName,omitempty"`
+	UUID       string      `json:"uuid,omitempty"`
+	Secret     *SecretSpec `json:"secret,omitempty"`
 }
 
 type SecretSpec struct {
