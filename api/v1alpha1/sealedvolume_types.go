@@ -25,9 +25,19 @@ import (
 
 // SealedVolumeSpec defines the desired state of SealedVolume
 type SealedVolumeSpec struct {
-	TPMHash     string                 `json:"TPMHash,omitempty"`
-	Passphrase  map[string]*SecretSpec `json:"partitionSecrets,omitempty"`
-	Quarantined bool                   `json:"quarantined,omitempty"`
+	TPMHash     string          `json:"TPMHash,omitempty"`
+	Partitions  []PartitionSpec `json:"partitions,omitempty"`
+	Quarantined bool            `json:"quarantined,omitempty"`
+}
+
+// PartitionSpec defines a Partition. A partition can be identified using
+// any of the fields: Label, DeviceName, UUID. The Secret defines the secret
+// which decrypts the partition.
+type PartitionSpec struct {
+	Label      string      `json:"label,omitempty"`
+	DeviceName string      `json:"deviceName,omitempty"`
+	UUID       string      `json:"uuid,omitempty"`
+	Secret     *SecretSpec `json:"secret,omitempty"`
 }
 
 type SecretSpec struct {

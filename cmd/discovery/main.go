@@ -48,7 +48,7 @@ func readServer() string {
 	return server
 }
 
-func waitPass(label string, attempts int) (pass string, err error) {
+func waitPass(p *block.Partition, attempts int) (pass string, err error) {
 	for tries := 0; tries < attempts; tries++ {
 		server := readServer()
 		if server == "" {
@@ -56,7 +56,7 @@ func waitPass(label string, attempts int) (pass string, err error) {
 			continue
 		}
 
-		pass, err = getPass(server, label)
+		pass, err = getPass(server, p)
 		if pass != "" || err == nil {
 			return pass, err
 		}
@@ -65,8 +65,11 @@ func waitPass(label string, attempts int) (pass string, err error) {
 	return
 }
 
-func getPass(server, label string) (string, error) {
-	msg, err := tpm.Get(server, tpm.WithAdditionalHeader("label", label))
+func getPass(server string, partition *block.Partition) (string, error) {
+	msg, err := tpm.Get(server,
+		tpm.WithAdditionalHeader("label", partition.Label),
+		tpm.WithAdditionalHeader("name", partition.Name),
+		tpm.WithAdditionalHeader("uuid", partition.UUID))
 	if err != nil {
 		return "", err
 	}
@@ -79,7 +82,7 @@ func getPass(server, label string) (string, error) {
 	if ok {
 		return fmt.Sprint(p), nil
 	}
-	return "", fmt.Errorf("pass for label not found")
+	return "", fmt.Errorf("pass for partition not found")
 }
 
 type config struct {
@@ -102,14 +105,10 @@ func start() error {
 			}
 		}
 
-		// TODO: This should be 1 call, send both name and label to controller
-		pass, err := waitPass(b.Label, 30)
-		if err != nil || pass == "" {
-			pass, err = waitPass(b.Name, 30)
-			if err != nil {
-				return pluggable.EventResponse{
-					Error: fmt.Sprintf("failed getting pass: %s", err.Error()),
-				}
+		pass, err := waitPass(b, 30)
+		if err != nil {
+			return pluggable.EventResponse{
+				Error: fmt.Sprintf("failed getting pass: %s", err.Error()),
 			}
 		}
 
