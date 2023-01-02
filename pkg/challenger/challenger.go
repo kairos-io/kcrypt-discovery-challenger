@@ -75,7 +75,6 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 		conn, _ := upgrader.Upgrade(w, r, nil) // error ignored for sake of simplicity
 
 		for {
-
 			fmt.Println("Received connection")
 			volumeList := &keyserverv1alpha1.SealedVolumeList{}
 			if err := reconciler.List(ctx, volumeList, &client.ListOptions{Namespace: namespace}); err != nil {
@@ -127,6 +126,7 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 				fmt.Println("error validating challenge", err.Error(), string(resp))
 				return
 			}
+			fmt.Println("challenge done")
 
 			writer, _ := conn.NextWriter(websocket.BinaryMessage)
 
@@ -134,10 +134,27 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 				secret, err := kclient.CoreV1().Secrets(namespace).Get(ctx, sealedVolumeData.SecretName, v1.GetOptions{})
 				if err == nil {
 					passphrase := secret.Data[sealedVolumeData.SecretPath]
-					json.NewEncoder(writer).Encode(map[string]string{"passphrase": string(passphrase)})
+					err = json.NewEncoder(writer).Encode(map[string]string{"passphrase": string(passphrase)})
+					if err != nil {
+						fmt.Println("error encoding the passphrase to json", err.Error(), string(passphrase))
+					}
+					if err = writer.Close(); err != nil {
+						fmt.Println("error closing the writer", err.Error())
+						return
+					}
+					if err = conn.Close(); err != nil {
+						fmt.Println("error closing the connection", err.Error())
+						return
+					}
+
+					return
 				}
 			} else {
-				conn.Close()
+				fmt.Println("error getting the secret", err.Error())
+				if err = conn.Close(); err != nil {
+					fmt.Println("error closing the connection", err.Error())
+					return
+				}
 				return
 			}
 		}
@@ -163,7 +180,13 @@ func findSecretFor(requestData PassphraseRequestData, volumeList *keyserverv1alp
 	for _, v := range volumeList.Items {
 		if requestData.TPMHash == v.Spec.TPMHash {
 			for _, p := range v.Spec.Partitions {
-				if p.Label == requestData.Label || p.DeviceName == requestData.DeviceName || p.UUID == requestData.UUID {
+				// TODO: Test this change. It shouldn't match the volume if one of the fields in the request is empty
+				// and the volume has it empty too!
+				deviceNameMatches := requestData.DeviceName != "" && p.DeviceName == requestData.DeviceName
+				uuidMatches := requestData.UUID != "" && p.UUID == requestData.UUID
+				labelMatches := requestData.Label != "" && p.Label == requestData.Label
+
+				if labelMatches || uuidMatches || deviceNameMatches {
 					return &SealedVolumeData{
 						Quarantined: v.Spec.Quarantined,
 						SecretName:  p.Secret.Name,
