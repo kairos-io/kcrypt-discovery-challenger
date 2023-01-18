@@ -11,7 +11,8 @@ import (
 	keyserverv1alpha1 "github.com/kairos-io/kairos-challenger/api/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	tpm "github.com/kairos-io/go-tpm"
+	tpm "github.com/kairos-io/tpm-helpers"
+
 	"github.com/kairos-io/kairos-challenger/controllers"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
