@@ -88,7 +88,13 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 			label := r.Header.Get("label")
 			name := r.Header.Get("name")
 			uuid := r.Header.Get("uuid")
-			ek, at, err := tpm.GetAttestationData(token)
+
+			if err := tpm.AuthRequest(r, conn); err != nil {
+				fmt.Println("error validating challenge", err.Error())
+				return
+			}
+
+			ek, _, err := tpm.GetAttestationData(token)
 			if err != nil {
 				fmt.Println("Failed getting tpm token")
 
@@ -115,22 +121,7 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 				return
 			}
 
-			secret, challenge, err := tpm.GenerateChallenge(ek, at)
-			if err != nil {
-				fmt.Println("error", err.Error())
-				return
-			}
-
-			resp, _ := writeRead(conn, challenge)
-
-			if err := tpm.ValidateChallenge(secret, resp); err != nil {
-				fmt.Println("error validating challenge", err.Error(), string(resp))
-				return
-			}
-			fmt.Println("challenge done")
-
 			writer, _ := conn.NextWriter(websocket.BinaryMessage)
-
 			if !sealedVolumeData.Quarantined {
 				secret, err := kclient.CoreV1().Secrets(namespace).Get(ctx, sealedVolumeData.SecretName, v1.GetOptions{})
 				if err == nil {

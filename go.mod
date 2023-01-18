@@ -6,7 +6,7 @@ require (
 	github.com/gorilla/websocket v1.5.0
 	github.com/jaypipes/ghw v0.9.0
 	github.com/kairos-io/kcrypt v0.4.5-0.20230118125949-27183fbce7ea
-	github.com/kairos-io/tpm-helpers v0.0.0-20230118144616-3f28d1857da9
+	github.com/kairos-io/tpm-helpers v0.0.0-20230118150816-18d63f3a8c83
 	github.com/mudler/go-pluggable v0.0.0-20220716112424-189d463e3ff3
 	github.com/onsi/ginkgo v1.16.5
 	github.com/onsi/ginkgo/v2 v2.7.0

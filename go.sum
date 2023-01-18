@@ -506,6 +506,8 @@ github.com/kairos-io/kcrypt v0.4.5-0.20230118125949-27183fbce7ea h1:1gnZW0HJt1Ye
 github.com/kairos-io/kcrypt v0.4.5-0.20230118125949-27183fbce7ea/go.mod h1:w8k7pDYjFVvt/qsEDNN/nt9qw4URg70cEKLPHGhnNgU=
 github.com/kairos-io/tpm-helpers v0.0.0-20230118144616-3f28d1857da9 h1:tFaUS+aflMccC47F7njJBGzi9epZvUjwj+026qGE4Es=
 github.com/kairos-io/tpm-helpers v0.0.0-20230118144616-3f28d1857da9/go.mod h1:6YGebKVrPoJGBd9QE+x4zyuo3vPw1y33iQkNChjlBo8=
+github.com/kairos-io/tpm-helpers v0.0.0-20230118150816-18d63f3a8c83 h1:iMkcVgFwK943ssSyuHK2/iPzOqNnz496TMbdPx/WP6A=
+github.com/kairos-io/tpm-helpers v0.0.0-20230118150816-18d63f3a8c83/go.mod h1:6YGebKVrPoJGBd9QE+x4zyuo3vPw1y33iQkNChjlBo8=
 github.com/kevinburke/ssh_config v0.0.0-20201106050909-4977a11b4351/go.mod h1:CT57kijsi8u/K/BOFA39wgDQJ9CxiF4nAY/ojJ6r6mM=
 github.com/kevinburke/ssh_config v1.2.0/go.mod h1:CT57kijsi8u/K/BOFA39wgDQJ9CxiF4nAY/ojJ6r6mM=
 github.com/kisielk/errcheck v1.1.0/go.mod h1:EZBBE59ingxPouuu3KfxchcWSUPOHkagtvWXihfKN4Q=
