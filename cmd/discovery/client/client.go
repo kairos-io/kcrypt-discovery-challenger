@@ -82,8 +82,6 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 }
 
 func (c *Client) getPass(server string, partition *block.Partition) (string, error) {
-	// TODO: This results in unexpected end of file when the other side closes the connection
-	// even when the passphrase is found. This shouldn't happen.
 	msg, err := tpm.Get(server,
 		tpm.WithAdditionalHeader("label", partition.Label),
 		tpm.WithAdditionalHeader("name", partition.Name),

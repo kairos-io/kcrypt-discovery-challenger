@@ -180,8 +180,6 @@ func findSecretFor(requestData PassphraseRequestData, volumeList *keyserverv1alp
 	for _, v := range volumeList.Items {
 		if requestData.TPMHash == v.Spec.TPMHash {
 			for _, p := range v.Spec.Partitions {
-				// TODO: Test this change. It shouldn't match the volume if one of the fields in the request is empty
-				// and the volume has it empty too!
 				deviceNameMatches := requestData.DeviceName != "" && p.DeviceName == requestData.DeviceName
 				uuidMatches := requestData.UUID != "" && p.UUID == requestData.UUID
 				labelMatches := requestData.Label != "" && p.Label == requestData.Label
