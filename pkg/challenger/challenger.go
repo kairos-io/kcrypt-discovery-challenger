@@ -11,9 +11,9 @@ import (
 	keyserverv1alpha1 "github.com/kairos-io/kairos-challenger/api/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	tpm "github.com/kairos-io/tpm-helpers"
-
 	"github.com/kairos-io/kairos-challenger/controllers"
+	tpm "github.com/kairos-io/tpm-helpers"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
@@ -33,6 +33,9 @@ type SealedVolumeData struct {
 	Quarantined bool
 	SecretName  string
 	SecretPath  string
+
+	PartitionLabel string
+	VolumeName     string
 }
 
 var upgrader = websocket.Upgrader{
@@ -62,6 +65,15 @@ func writeRead(conn *websocket.Conn, input []byte) ([]byte, error) {
 	return ioutil.ReadAll(reader)
 }
 
+func getPubHash(token string) (string, error) {
+	ek, _, err := tpm.GetAttestationData(token)
+	if err != nil {
+		return "", err
+	}
+
+	return tpm.DecodePubHash(ek)
+}
+
 func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *controllers.SealedVolumeReconciler, namespace, address string) {
 	fmt.Println("Challenger started at", address)
 	s := http.Server{
@@ -72,7 +84,93 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 
 	m := http.NewServeMux()
 
-	m.HandleFunc("/challenge", func(w http.ResponseWriter, r *http.Request) {
+	m.HandleFunc("/postPass", func(w http.ResponseWriter, r *http.Request) {
+		conn, _ := upgrader.Upgrade(w, r, nil) // error ignored for sake of simplicity
+		for {
+			if err := tpm.AuthRequest(r, conn); err != nil {
+				fmt.Println("error", err.Error())
+				return
+			}
+			defer conn.Close()
+			token := r.Header.Get("Authorization")
+
+			hashEncoded, err := getPubHash(token)
+			if err != nil {
+				fmt.Println("error decoding pubhash", err.Error())
+				return
+			}
+
+			label := r.Header.Get("label")
+			name := r.Header.Get("name")
+			uuid := r.Header.Get("uuid")
+			v := map[string]string{}
+
+			volumeList := &keyserverv1alpha1.SealedVolumeList{}
+			if err := reconciler.List(ctx, volumeList, &client.ListOptions{Namespace: namespace}); err != nil {
+				fmt.Println("Failed listing volumes")
+				fmt.Println(err)
+				continue
+			}
+
+			sealedVolumeData := findSecretFor(PassphraseRequestData{
+				TPMHash:    hashEncoded,
+				Label:      label,
+				DeviceName: name,
+				UUID:       uuid,
+			}, volumeList)
+
+			if sealedVolumeData == nil {
+				fmt.Println("No TPM Hash found for", hashEncoded)
+				conn.Close()
+				return
+			}
+
+			if err := conn.ReadJSON(&v); err != nil {
+				fmt.Println("error", err.Error())
+				return
+			}
+
+			pass, ok := v["passphrase"]
+			if ok {
+				secretName := fmt.Sprintf("%s-%s", sealedVolumeData.VolumeName, sealedVolumeData.PartitionLabel)
+				secretPath := "passphrase"
+				if sealedVolumeData.SecretName != "" {
+					secretName = sealedVolumeData.SecretName
+				}
+				if sealedVolumeData.SecretPath != "" {
+					secretPath = sealedVolumeData.SecretPath
+				}
+				_, err := kclient.CoreV1().Secrets(namespace).Get(ctx, secretName, v1.GetOptions{})
+				if err != nil {
+					secret := corev1.Secret{
+						TypeMeta: v1.TypeMeta{
+							Kind:       "Secret",
+							APIVersion: "apps/v1",
+						},
+						ObjectMeta: v1.ObjectMeta{
+							Name:      secretName,
+							Namespace: namespace,
+						},
+						Data: map[string][]byte{
+							secretPath:  []byte(pass),
+							"generated": []byte(v["generated"]),
+						},
+						Type: "Opaque",
+					}
+					_, err := kclient.CoreV1().Secrets(namespace).Create(ctx, &secret, v1.CreateOptions{})
+					if err != nil {
+						fmt.Println("failed during secret creation")
+					}
+				} else {
+					fmt.Println("Posted for already existing secret - ignoring")
+				}
+			} else {
+				fmt.Println("Invalid answer from client: doesn't contain any passphrase")
+			}
+		}
+	})
+
+	m.HandleFunc("/getPass", func(w http.ResponseWriter, r *http.Request) {
 		conn, _ := upgrader.Upgrade(w, r, nil) // error ignored for sake of simplicity
 
 		for {
@@ -94,15 +192,7 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 				return
 			}
 
-			ek, _, err := tpm.GetAttestationData(token)
-			if err != nil {
-				fmt.Println("Failed getting tpm token")
-
-				fmt.Println("error", err.Error())
-				return
-			}
-
-			hashEncoded, err := tpm.DecodePubHash(ek)
+			hashEncoded, err := getPubHash(token)
 			if err != nil {
 				fmt.Println("error decoding pubhash", err.Error())
 				return
@@ -120,13 +210,26 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 				conn.Close()
 				return
 			}
-
 			writer, _ := conn.NextWriter(websocket.BinaryMessage)
 			if !sealedVolumeData.Quarantined {
-				secret, err := kclient.CoreV1().Secrets(namespace).Get(ctx, sealedVolumeData.SecretName, v1.GetOptions{})
+				secretName := fmt.Sprintf("%s-%s", sealedVolumeData.VolumeName, sealedVolumeData.PartitionLabel)
+				secretPath := "passphrase"
+				if sealedVolumeData.SecretName != "" {
+					secretName = sealedVolumeData.SecretName
+				}
+				if sealedVolumeData.SecretPath != "" {
+					secretPath = sealedVolumeData.SecretPath
+				}
+
+				secret, err := kclient.CoreV1().Secrets(namespace).Get(ctx, secretName, v1.GetOptions{})
 				if err == nil {
-					passphrase := secret.Data[sealedVolumeData.SecretPath]
-					err = json.NewEncoder(writer).Encode(map[string]string{"passphrase": string(passphrase)})
+					passphrase := secret.Data[secretPath]
+					gen, generated := secret.Data["generated"]
+					result := map[string]string{"passphrase": string(passphrase)}
+					if generated {
+						result["generated"] = string(gen)
+					}
+					err = json.NewEncoder(writer).Encode(result)
 					if err != nil {
 						fmt.Println("error encoding the passphrase to json", err.Error(), string(passphrase))
 					}
@@ -178,9 +281,11 @@ func findSecretFor(requestData PassphraseRequestData, volumeList *keyserverv1alp
 
 				if labelMatches || uuidMatches || deviceNameMatches {
 					return &SealedVolumeData{
-						Quarantined: v.Spec.Quarantined,
-						SecretName:  p.Secret.Name,
-						SecretPath:  p.Secret.Path,
+						Quarantined:    v.Spec.Quarantined,
+						SecretName:     p.Secret.Name,
+						SecretPath:     p.Secret.Path,
+						VolumeName:     v.Name,
+						PartitionLabel: p.Label,
 					}
 				}
 			}

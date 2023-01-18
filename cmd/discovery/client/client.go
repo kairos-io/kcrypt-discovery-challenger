@@ -1,25 +1,24 @@
 package client
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/jaypipes/ghw/pkg/block"
+	"github.com/kairos-io/kairos-challenger/pkg/constants"
 	"github.com/kairos-io/kcrypt/pkg/bus"
-	kconfig "github.com/kairos-io/kcrypt/pkg/config"
 	"github.com/kairos-io/tpm-helpers"
 	"github.com/mudler/go-pluggable"
-	"github.com/pkg/errors"
+	"github.com/mudler/yip/pkg/utils"
 )
 
-type Client struct {
-	Config kconfig.Config
-}
+var partNotFound error = fmt.Errorf("pass for partition not found")
 
 func NewClient() (*Client, error) {
-	conf, err := kconfig.GetConfiguration(kconfig.ConfigScanDirs)
+	conf, err := unmarshalConfig()
 	if err != nil {
 		return nil, err
 	}
@@ -59,44 +58,64 @@ func (c *Client) Start() error {
 }
 
 func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err error) {
-	// TODO: Why are we retrying?
-	// We don't need to retry if there is no matching secret.
-	// TODO: Check if the request was successful and if the error was about
-	// non-matching sealed volume, let's not retry.
+	// IF we don't have any server configured, just do local
+	if c.Config.Kcrypt.Server == "" {
+		return localPass(c.Config)
+	}
+
+	challengeEndpoint := fmt.Sprintf("%s/getPass", c.Config.Kcrypt.Server)
+	postEndpoint := fmt.Sprintf("%s/postPass", c.Config.Kcrypt.Server)
+
+	// IF server doesn't have a pass for us, then we generate one and we set it
+	if _, _, err := getPass(challengeEndpoint, p); err == partNotFound {
+		rand := utils.RandomString(32)
+		pass, err := tpm.EncodeBlob([]byte(rand))
+		if err != nil {
+			return "", err
+		}
+		bpass := base64.RawURLEncoding.EncodeToString(pass)
+
+		opts := []tpm.Option{tpm.WithAdditionalHeader("label", p.Label),
+			tpm.WithAdditionalHeader("name", p.Name),
+			tpm.WithAdditionalHeader("uuid", p.UUID),
+		}
+		conn, err := tpm.Connection(postEndpoint, opts...)
+		if err != nil {
+			return "", err
+		}
+		err = conn.WriteJSON(map[string]string{"passphrase": bpass, "generated": constants.TPMSecret})
+		if err != nil {
+			return rand, err
+		}
+	}
 	for tries := 0; tries < attempts; tries++ {
-		if c.Config.Kcrypt.Server == "" {
-			err = fmt.Errorf("no server configured")
-			continue
+		var generated bool
+		pass, generated, err = getPass(challengeEndpoint, p)
+		if generated {
+			blob, err := base64.RawURLEncoding.DecodeString(pass)
+			if err != nil {
+				return "", err
+			}
+			// Decode and give it back
+			opts := []tpm.TPMOption{}
+			if c.Config.Kcrypt.CIndex != "" {
+				opts = append(opts, tpm.WithIndex(c.Config.Kcrypt.CIndex))
+			}
+			if c.Config.Kcrypt.TPMDevice != "" {
+				opts = append(opts, tpm.WithDevice(c.Config.Kcrypt.TPMDevice))
+			}
+			pass, err := tpm.DecodeBlob(blob, opts...)
+			return string(pass), err
 		}
 
-		pass, err = c.getPass(c.Config.Kcrypt.Server, p)
 		if pass != "" || err == nil {
 			return
 		}
-		if err != nil {
+		if err == partNotFound {
 			return
 		}
+		// Otherwise, we might have a generic network error and we retry
 		time.Sleep(1 * time.Second)
 	}
 	return
-}
-
-func (c *Client) getPass(server string, partition *block.Partition) (string, error) {
-	msg, err := tpm.Get(server,
-		tpm.WithAdditionalHeader("label", partition.Label),
-		tpm.WithAdditionalHeader("name", partition.Name),
-		tpm.WithAdditionalHeader("uuid", partition.UUID))
-	if err != nil {
-		return "", err
-	}
-	result := map[string]interface{}{}
-	err = json.Unmarshal(msg, &result)
-	if err != nil {
-		return "", errors.Wrap(err, string(msg))
-	}
-	p, ok := result["passphrase"]
-	if ok {
-		return fmt.Sprint(p), nil
-	}
-	return "", fmt.Errorf("pass for partition not found")
 }
