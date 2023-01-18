@@ -41,8 +41,12 @@ test:
     COPY go.mod go.sum ./
     RUN go mod download && go mod verify
 
-    RUN go install github.com/onsi/ginkgo/v2/ginkgo
+    RUN go get github.com/onsi/gomega/...
+    RUN go get github.com/onsi/ginkgo/v2/ginkgo/internal@v2.1.4
+    RUN go get github.com/onsi/ginkgo/v2/ginkgo/generators@v2.1.4
+    RUN go get github.com/onsi/ginkgo/v2/ginkgo/labels@v2.1.4
+    RUN go install -mod=mod github.com/onsi/ginkgo/v2/ginkgo
 
     COPY . /work
-    RUN PATH=$PATH:$GOPATH/bin ginkgo run --covermode=atomic --coverprofile=coverage.out -p -r pkg/challenger
+    RUN PATH=$PATH:$GOPATH/bin ginkgo run --covermode=atomic --coverprofile=coverage.out -p -r pkg/challenger cmd/discovery/client
     SAVE ARTIFACT coverage.out AS LOCAL coverage.out

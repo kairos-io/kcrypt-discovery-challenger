@@ -46,6 +46,32 @@ var _ = Describe("challenger", func() {
 			})
 		})
 
+		When("a sealedvolume with empty field exists", func() {
+			BeforeEach(func() {
+				volumeList = volumeListWithPartitionSpec(
+					keyserverv1alpha1.PartitionSpec{
+						Label:      "",
+						DeviceName: "not_matching",
+						UUID:       "not_matching",
+						Secret: &keyserverv1alpha1.SecretSpec{
+							Name: "the_secret",
+							Path: "the_path",
+						}})
+
+				requestData = PassphraseRequestData{
+					TPMHash:    "1234",
+					Label:      "",
+					DeviceName: "/dev/sda1",
+					UUID:       "sda1_uuid",
+				}
+			})
+
+			It("doesn't match a request with an empty field", func() {
+				volumeData := findSecretFor(requestData, volumeList)
+				Expect(volumeData).To(BeNil())
+			})
+		})
+
 		When("a sealedvolume matching the device name exists", func() {
 			BeforeEach(func() {
 				volumeList = volumeListWithPartitionSpec(
