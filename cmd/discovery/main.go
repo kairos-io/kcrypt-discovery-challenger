@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/kairos-io/go-tpm"
 	"github.com/kairos-io/kairos-challenger/cmd/discovery/client"
 	"github.com/kairos-io/kcrypt/pkg/bus"
+	"github.com/kairos-io/tpm-helpers"
 )
 
 func main() {

@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/jaypipes/ghw/pkg/block"
-	"github.com/kairos-io/go-tpm"
 	"github.com/kairos-io/kcrypt/pkg/bus"
 	kconfig "github.com/kairos-io/kcrypt/pkg/config"
+	"github.com/kairos-io/tpm-helpers"
 	"github.com/mudler/go-pluggable"
 	"github.com/pkg/errors"
 )
