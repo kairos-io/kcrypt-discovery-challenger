@@ -38,7 +38,7 @@ var _ = Describe("challenger", func() {
 			})
 
 			It("returns the sealed volume data", func() {
-				volumeData := findSecretFor(requestData, volumeList)
+				volumeData := findVolumeFor(requestData, volumeList)
 				Expect(volumeData).ToNot(BeNil())
 				Expect(volumeData.Quarantined).To(BeFalse())
 				Expect(volumeData.SecretName).To(Equal("the_secret"))
@@ -67,7 +67,7 @@ var _ = Describe("challenger", func() {
 			})
 
 			It("doesn't match a request with an empty field", func() {
-				volumeData := findSecretFor(requestData, volumeList)
+				volumeData := findVolumeFor(requestData, volumeList)
 				Expect(volumeData).To(BeNil())
 			})
 		})
@@ -86,7 +86,7 @@ var _ = Describe("challenger", func() {
 			})
 
 			It("returns the sealed volume data", func() {
-				volumeData := findSecretFor(requestData, volumeList)
+				volumeData := findVolumeFor(requestData, volumeList)
 				Expect(volumeData).ToNot(BeNil())
 				Expect(volumeData.Quarantined).To(BeFalse())
 				Expect(volumeData.SecretName).To(Equal("the_secret"))
@@ -108,7 +108,7 @@ var _ = Describe("challenger", func() {
 			})
 
 			It("returns the sealed volume data", func() {
-				volumeData := findSecretFor(requestData, volumeList)
+				volumeData := findVolumeFor(requestData, volumeList)
 				Expect(volumeData).ToNot(BeNil())
 				Expect(volumeData.Quarantined).To(BeFalse())
 				Expect(volumeData.SecretName).To(Equal("the_secret"))
@@ -130,7 +130,7 @@ var _ = Describe("challenger", func() {
 			})
 
 			It("returns nil sealedVolumeData", func() {
-				volumeData := findSecretFor(requestData, volumeList)
+				volumeData := findVolumeFor(requestData, volumeList)
 				Expect(volumeData).To(BeNil())
 			})
 		})
