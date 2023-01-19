@@ -89,36 +89,41 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 			return rand, err
 		}
 	}
+
 	for tries := 0; tries < attempts; tries++ {
 		var generated bool
 		pass, generated, err = getPass(challengeEndpoint, p)
-		if generated {
-			// Decode what the challenger server gave us
-			blob, err := base64.RawURLEncoding.DecodeString(pass)
-			if err != nil {
-				return "", err
-			}
-
-			// Decrypt and return it to unseal the LUKS volume
-			opts := []tpm.TPMOption{}
-			if c.Config.Kcrypt.Challenger.CIndex != "" {
-				opts = append(opts, tpm.WithIndex(c.Config.Kcrypt.Challenger.CIndex))
-			}
-			if c.Config.Kcrypt.Challenger.TPMDevice != "" {
-				opts = append(opts, tpm.WithDevice(c.Config.Kcrypt.Challenger.TPMDevice))
-			}
-			pass, err := tpm.DecodeBlob(blob, opts...)
-			return string(pass), err
+		if generated { // passphrase is encrypted
+			return c.decryptPassphrase(pass)
 		}
 
-		if pass != "" || err == nil {
+		if err == nil || err == errPartNotFound { // passphrase not encrypted or not available
 			return
 		}
-		if err == errPartNotFound {
-			return
-		}
-		// Otherwise, we might have a generic network error and we retry
-		time.Sleep(1 * time.Second)
+
+		time.Sleep(1 * time.Second) // network errors? retry
 	}
+
 	return
+}
+
+// decryptPassphrase decodes (base64) and decrypts the passphrase returned
+// by the challenger server.
+func (c *Client) decryptPassphrase(pass string) (string, error) {
+	blob, err := base64.RawURLEncoding.DecodeString(pass)
+	if err != nil {
+		return "", err
+	}
+
+	// Decrypt and return it to unseal the LUKS volume
+	opts := []tpm.TPMOption{}
+	if c.Config.Kcrypt.Challenger.CIndex != "" {
+		opts = append(opts, tpm.WithIndex(c.Config.Kcrypt.Challenger.CIndex))
+	}
+	if c.Config.Kcrypt.Challenger.TPMDevice != "" {
+		opts = append(opts, tpm.WithDevice(c.Config.Kcrypt.Challenger.TPMDevice))
+	}
+	passBytes, err := tpm.DecodeBlob(blob, opts...)
+
+	return string(passBytes), err
 }
