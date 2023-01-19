@@ -15,7 +15,7 @@ import (
 	"github.com/mudler/yip/pkg/utils"
 )
 
-var partNotFound error = fmt.Errorf("pass for partition not found")
+var errPartNotFound error = fmt.Errorf("pass for partition not found")
 
 func NewClient() (*Client, error) {
 	conf, err := unmarshalConfig()
@@ -59,15 +59,15 @@ func (c *Client) Start() error {
 
 func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err error) {
 	// IF we don't have any server configured, just do local
-	if c.Config.Kcrypt.Server == "" {
+	if c.Config.Kcrypt.Challenger.Server == "" {
 		return localPass(c.Config)
 	}
 
-	challengeEndpoint := fmt.Sprintf("%s/getPass", c.Config.Kcrypt.Server)
-	postEndpoint := fmt.Sprintf("%s/postPass", c.Config.Kcrypt.Server)
+	challengeEndpoint := fmt.Sprintf("%s/getPass", c.Config.Kcrypt.Challenger.Server)
+	postEndpoint := fmt.Sprintf("%s/postPass", c.Config.Kcrypt.Challenger.Server)
 
 	// IF server doesn't have a pass for us, then we generate one and we set it
-	if _, _, err := getPass(challengeEndpoint, p); err == partNotFound {
+	if _, _, err := getPass(challengeEndpoint, p); err == errPartNotFound {
 		rand := utils.RandomString(32)
 		pass, err := tpm.EncodeBlob([]byte(rand))
 		if err != nil {
@@ -75,7 +75,8 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 		}
 		bpass := base64.RawURLEncoding.EncodeToString(pass)
 
-		opts := []tpm.Option{tpm.WithAdditionalHeader("label", p.Label),
+		opts := []tpm.Option{
+			tpm.WithAdditionalHeader("label", p.Label),
 			tpm.WithAdditionalHeader("name", p.Name),
 			tpm.WithAdditionalHeader("uuid", p.UUID),
 		}
@@ -83,7 +84,7 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 		if err != nil {
 			return "", err
 		}
-		err = conn.WriteJSON(map[string]string{"passphrase": bpass, "generated": constants.TPMSecret})
+		err = conn.WriteJSON(map[string]string{"passphrase": bpass, constants.GeneratedByKey: constants.TPMSecret})
 		if err != nil {
 			return rand, err
 		}
@@ -92,17 +93,19 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 		var generated bool
 		pass, generated, err = getPass(challengeEndpoint, p)
 		if generated {
+			// Decode what the challenger server gave us
 			blob, err := base64.RawURLEncoding.DecodeString(pass)
 			if err != nil {
 				return "", err
 			}
-			// Decode and give it back
+
+			// Decrypt and return it to unseal the LUKS volume
 			opts := []tpm.TPMOption{}
-			if c.Config.Kcrypt.CIndex != "" {
-				opts = append(opts, tpm.WithIndex(c.Config.Kcrypt.CIndex))
+			if c.Config.Kcrypt.Challenger.CIndex != "" {
+				opts = append(opts, tpm.WithIndex(c.Config.Kcrypt.Challenger.CIndex))
 			}
-			if c.Config.Kcrypt.TPMDevice != "" {
-				opts = append(opts, tpm.WithDevice(c.Config.Kcrypt.TPMDevice))
+			if c.Config.Kcrypt.Challenger.TPMDevice != "" {
+				opts = append(opts, tpm.WithDevice(c.Config.Kcrypt.Challenger.TPMDevice))
 			}
 			pass, err := tpm.DecodeBlob(blob, opts...)
 			return string(pass), err
@@ -111,7 +114,7 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 		if pass != "" || err == nil {
 			return
 		}
-		if err == partNotFound {
+		if err == errPartNotFound {
 			return
 		}
 		// Otherwise, we might have a generic network error and we retry

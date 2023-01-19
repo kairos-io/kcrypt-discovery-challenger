@@ -30,16 +30,16 @@ func getPass(server string, partition *block.Partition) (string, bool, error) {
 	if ok {
 		return fmt.Sprint(p), generated && gen == constants.TPMSecret, nil
 	}
-	return "", false, partNotFound
+	return "", false, errPartNotFound
 }
 
 func genAndStore(k Config) (string, error) {
 	opts := []tpm.TPMOption{}
-	if k.Kcrypt.TPMDevice != "" {
-		opts = append(opts, tpm.WithDevice(k.Kcrypt.TPMDevice))
+	if k.Kcrypt.Challenger.TPMDevice != "" {
+		opts = append(opts, tpm.WithDevice(k.Kcrypt.Challenger.TPMDevice))
 	}
-	if k.Kcrypt.CIndex != "" {
-		opts = append(opts, tpm.WithIndex(k.Kcrypt.CIndex))
+	if k.Kcrypt.Challenger.CIndex != "" {
+		opts = append(opts, tpm.WithIndex(k.Kcrypt.Challenger.CIndex))
 	}
 
 	// Generate a new one, and return it to luks
@@ -49,8 +49,8 @@ func genAndStore(k Config) (string, error) {
 		return "", err
 	}
 	nvindex := "0x1500000"
-	if k.Kcrypt.NVIndex != "" {
-		nvindex = k.Kcrypt.NVIndex
+	if k.Kcrypt.Challenger.NVIndex != "" {
+		nvindex = k.Kcrypt.Challenger.NVIndex
 	}
 	opts = append(opts, tpm.WithIndex(nvindex))
 	return rand, tpm.StoreBlob(blob, opts...)
@@ -58,12 +58,12 @@ func genAndStore(k Config) (string, error) {
 
 func localPass(k Config) (string, error) {
 	index := "0x1500000"
-	if k.Kcrypt.NVIndex != "" {
-		index = k.Kcrypt.NVIndex
+	if k.Kcrypt.Challenger.NVIndex != "" {
+		index = k.Kcrypt.Challenger.NVIndex
 	}
 	opts := []tpm.TPMOption{tpm.WithIndex(index)}
-	if k.Kcrypt.TPMDevice != "" {
-		opts = append(opts, tpm.WithDevice(k.Kcrypt.TPMDevice))
+	if k.Kcrypt.Challenger.TPMDevice != "" {
+		opts = append(opts, tpm.WithDevice(k.Kcrypt.Challenger.TPMDevice))
 	}
 	encodedPass, err := tpm.ReadBlob(opts...)
 	if err != nil {
@@ -73,11 +73,11 @@ func localPass(k Config) (string, error) {
 
 	// Decode and give it back
 	opts = []tpm.TPMOption{}
-	if k.Kcrypt.CIndex != "" {
-		opts = append(opts, tpm.WithIndex(k.Kcrypt.CIndex))
+	if k.Kcrypt.Challenger.CIndex != "" {
+		opts = append(opts, tpm.WithIndex(k.Kcrypt.Challenger.CIndex))
 	}
-	if k.Kcrypt.TPMDevice != "" {
-		opts = append(opts, tpm.WithDevice(k.Kcrypt.TPMDevice))
+	if k.Kcrypt.Challenger.TPMDevice != "" {
+		opts = append(opts, tpm.WithDevice(k.Kcrypt.Challenger.TPMDevice))
 	}
 	pass, err := tpm.DecodeBlob(encodedPass, opts...)
 	return string(pass), err

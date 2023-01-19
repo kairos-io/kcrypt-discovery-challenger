@@ -11,10 +11,12 @@ type Client struct {
 
 type Config struct {
 	Kcrypt struct {
-		Server    string `yaml:"challenger_server,omitempty"`
-		NVIndex   string `yaml:"nv_index,omitempty"`
-		CIndex    string `yaml:"c_index,omitempty"`
-		TPMDevice string `yaml:"tpm_device,omitempty"`
+		Challenger struct {
+			Server    string `yaml:"challenger_server,omitempty"`
+			NVIndex   string `yaml:"nv_index,omitempty"`
+			CIndex    string `yaml:"c_index,omitempty"`
+			TPMDevice string `yaml:"tpm_device,omitempty"`
+		}
 	}
 }
 

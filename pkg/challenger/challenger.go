@@ -9,6 +9,7 @@ import (
 	"time"
 
 	keyserverv1alpha1 "github.com/kairos-io/kairos-challenger/api/v1alpha1"
+	"github.com/kairos-io/kairos-challenger/pkg/constants"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kairos-io/kairos-challenger/controllers"
@@ -152,8 +153,8 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 							Namespace: namespace,
 						},
 						Data: map[string][]byte{
-							secretPath:  []byte(pass),
-							"generated": []byte(v["generated"]),
+							secretPath:               []byte(pass),
+							constants.GeneratedByKey: []byte(v[constants.GeneratedByKey]),
 						},
 						Type: "Opaque",
 					}
@@ -221,13 +222,18 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 					secretPath = sealedVolumeData.SecretPath
 				}
 
+				// 1. The admin sets a specific cleartext password from Kube manager
+				//      SealedVolume -> with a secret .
+				// 2. The admin just adds a SealedVolume associated with a TPM Hash ( you don't provide any passphrase )
+				// 3. There is no challenger server at all (offline mode)
+				//
 				secret, err := kclient.CoreV1().Secrets(namespace).Get(ctx, secretName, v1.GetOptions{})
 				if err == nil {
 					passphrase := secret.Data[secretPath]
-					gen, generated := secret.Data["generated"]
+					gen, generated := secret.Data[constants.GeneratedByKey]
 					result := map[string]string{"passphrase": string(passphrase)}
 					if generated {
-						result["generated"] = string(gen)
+						result[constants.GeneratedByKey] = string(gen)
 					}
 					err = json.NewEncoder(writer).Encode(result)
 					if err != nil {
