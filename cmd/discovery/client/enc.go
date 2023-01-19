@@ -12,6 +12,8 @@ import (
 	"github.com/pkg/errors"
 )
 
+const DefaultNVIndex = "0x1500000"
+
 func getPass(server string, partition *block.Partition) (string, bool, error) {
 	msg, err := tpm.Get(server,
 		tpm.WithAdditionalHeader("label", partition.Label),
@@ -48,7 +50,7 @@ func genAndStore(k Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	nvindex := "0x1500000"
+	nvindex := DefaultNVIndex
 	if k.Kcrypt.Challenger.NVIndex != "" {
 		nvindex = k.Kcrypt.Challenger.NVIndex
 	}
@@ -57,7 +59,7 @@ func genAndStore(k Config) (string, error) {
 }
 
 func localPass(k Config) (string, error) {
-	index := "0x1500000"
+	index := DefaultNVIndex
 	if k.Kcrypt.Challenger.NVIndex != "" {
 		index = k.Kcrypt.Challenger.NVIndex
 	}

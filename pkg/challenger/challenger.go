@@ -15,6 +15,7 @@ import (
 	"github.com/kairos-io/kairos-challenger/controllers"
 	tpm "github.com/kairos-io/tpm-helpers"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
@@ -113,7 +114,7 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 				continue
 			}
 
-			sealedVolumeData := findSecretFor(PassphraseRequestData{
+			sealedVolumeData := findVolumeFor(PassphraseRequestData{
 				TPMHash:    hashEncoded,
 				Label:      label,
 				DeviceName: name,
@@ -143,6 +144,11 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 				}
 				_, err := kclient.CoreV1().Secrets(namespace).Get(ctx, secretName, v1.GetOptions{})
 				if err != nil {
+					if !apierrors.IsNotFound(err) {
+						fmt.Printf("Failed getting secret: %s\n", err.Error())
+						continue
+					}
+
 					secret := corev1.Secret{
 						TypeMeta: v1.TypeMeta{
 							Kind:       "Secret",
@@ -199,7 +205,7 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 				return
 			}
 
-			sealedVolumeData := findSecretFor(PassphraseRequestData{
+			sealedVolumeData := findVolumeFor(PassphraseRequestData{
 				TPMHash:    hashEncoded,
 				Label:      label,
 				DeviceName: name,
@@ -230,10 +236,10 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 				secret, err := kclient.CoreV1().Secrets(namespace).Get(ctx, secretName, v1.GetOptions{})
 				if err == nil {
 					passphrase := secret.Data[secretPath]
-					gen, generated := secret.Data[constants.GeneratedByKey]
+					generatedBy, generated := secret.Data[constants.GeneratedByKey]
 					result := map[string]string{"passphrase": string(passphrase)}
 					if generated {
-						result[constants.GeneratedByKey] = string(gen)
+						result[constants.GeneratedByKey] = string(generatedBy)
 					}
 					err = json.NewEncoder(writer).Encode(result)
 					if err != nil {
@@ -277,7 +283,7 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 	}()
 }
 
-func findSecretFor(requestData PassphraseRequestData, volumeList *keyserverv1alpha1.SealedVolumeList) *SealedVolumeData {
+func findVolumeFor(requestData PassphraseRequestData, volumeList *keyserverv1alpha1.SealedVolumeList) *SealedVolumeData {
 	for _, v := range volumeList.Items {
 		if requestData.TPMHash == v.Spec.TPMHash {
 			for _, p := range v.Spec.Partitions {
