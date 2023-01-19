@@ -69,7 +69,7 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 	// IF server doesn't have a pass for us, then we generate one and we set it
 	if _, _, err := getPass(challengeEndpoint, p); err == errPartNotFound {
 		rand := utils.RandomString(32)
-		pass, err := tpm.EncodeBlob([]byte(rand))
+		pass, err := tpm.EncryptBlob([]byte(rand))
 		if err != nil {
 			return "", err
 		}
@@ -123,7 +123,7 @@ func (c *Client) decryptPassphrase(pass string) (string, error) {
 	if c.Config.Kcrypt.Challenger.TPMDevice != "" {
 		opts = append(opts, tpm.WithDevice(c.Config.Kcrypt.Challenger.TPMDevice))
 	}
-	passBytes, err := tpm.DecodeBlob(blob, opts...)
+	passBytes, err := tpm.DecryptBlob(blob, opts...)
 
 	return string(passBytes), err
 }

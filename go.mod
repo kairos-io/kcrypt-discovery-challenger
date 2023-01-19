@@ -7,13 +7,14 @@ require (
 	github.com/jaypipes/ghw v0.9.0
 	github.com/kairos-io/kairos v1.24.3-56.0.20230118103822-e3dbd41dddd1
 	github.com/kairos-io/kcrypt v0.4.5-0.20230118125949-27183fbce7ea
-	github.com/kairos-io/tpm-helpers v0.0.0-20230118150816-18d63f3a8c83
+	github.com/kairos-io/tpm-helpers v0.0.0-20230119140150-3fa97128ef6b
 	github.com/mudler/go-pluggable v0.0.0-20220716112424-189d463e3ff3
 	github.com/mudler/yip v0.11.4
 	github.com/onsi/ginkgo v1.16.5
 	github.com/onsi/ginkgo/v2 v2.7.0
 	github.com/onsi/gomega v1.25.0
 	github.com/pkg/errors v0.9.1
+	k8s.io/api v0.24.2
 	k8s.io/apimachinery v0.24.2
 	k8s.io/client-go v0.24.2
 	sigs.k8s.io/controller-runtime v0.12.2
@@ -63,8 +64,8 @@ require (
 	github.com/google/go-attestation v0.4.4-0.20220404204839-8820d49b18d9 // indirect
 	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/google/go-tpm v0.3.3 // indirect
-	github.com/google/go-tpm-tools v0.3.7 // indirect
-	github.com/google/go-tspi v0.2.1-0.20190423175329-115dea689aad // indirect
+	github.com/google/go-tpm-tools v0.3.10 // indirect
+	github.com/google/go-tspi v0.3.0 // indirect
 	github.com/google/gofuzz v1.1.0 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/google/uuid v1.3.0 // indirect
@@ -122,7 +123,6 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	howett.net/plist v1.0.0 // indirect
-	k8s.io/api v0.24.2 // indirect
 	k8s.io/apiextensions-apiserver v0.24.2 // indirect
 	k8s.io/component-base v0.24.2 // indirect
 	k8s.io/klog/v2 v2.80.1 // indirect

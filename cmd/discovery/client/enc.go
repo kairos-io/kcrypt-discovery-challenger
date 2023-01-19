@@ -25,10 +25,10 @@ func getPass(server string, partition *block.Partition) (string, bool, error) {
 	if err != nil {
 		return "", false, errors.Wrap(err, string(msg))
 	}
-	gen, generated := result["generated"]
+	generatedBy, generated := result[constants.GeneratedByKey]
 	p, ok := result["passphrase"]
 	if ok {
-		return fmt.Sprint(p), generated && gen == constants.TPMSecret, nil
+		return fmt.Sprint(p), generated && generatedBy == constants.TPMSecret, nil
 	}
 	return "", false, errPartNotFound
 }
@@ -44,7 +44,7 @@ func genAndStore(k Config) (string, error) {
 
 	// Generate a new one, and return it to luks
 	rand := utils.RandomString(32)
-	blob, err := tpm.EncodeBlob([]byte(rand))
+	blob, err := tpm.EncryptBlob([]byte(rand))
 	if err != nil {
 		return "", err
 	}
@@ -79,6 +79,6 @@ func localPass(k Config) (string, error) {
 	if k.Kcrypt.Challenger.TPMDevice != "" {
 		opts = append(opts, tpm.WithDevice(k.Kcrypt.Challenger.TPMDevice))
 	}
-	pass, err := tpm.DecodeBlob(encodedPass, opts...)
+	pass, err := tpm.DecryptBlob(encodedPass, opts...)
 	return string(pass), err
 }
