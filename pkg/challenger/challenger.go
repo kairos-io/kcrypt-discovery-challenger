@@ -290,12 +290,19 @@ func findVolumeFor(requestData PassphraseRequestData, volumeList *keyserverv1alp
 				deviceNameMatches := requestData.DeviceName != "" && p.DeviceName == requestData.DeviceName
 				uuidMatches := requestData.UUID != "" && p.UUID == requestData.UUID
 				labelMatches := requestData.Label != "" && p.Label == requestData.Label
-
+				secretName := ""
+				if p.Secret != nil && p.Secret.Name != "" {
+					secretName = p.Secret.Name
+				}
+				secretPath := ""
+				if p.Secret != nil && p.Secret.Path != "" {
+					secretPath = p.Secret.Path
+				}
 				if labelMatches || uuidMatches || deviceNameMatches {
 					return &SealedVolumeData{
 						Quarantined:    v.Spec.Quarantined,
-						SecretName:     p.Secret.Name,
-						SecretPath:     p.Secret.Path,
+						SecretName:     secretName,
+						SecretPath:     secretPath,
 						VolumeName:     v.Name,
 						PartitionLabel: p.Label,
 					}
