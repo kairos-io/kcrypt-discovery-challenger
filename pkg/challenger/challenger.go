@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"strings"
 	"time"
 
 	keyserverv1alpha1 "github.com/kairos-io/kairos-challenger/api/v1alpha1"
@@ -45,6 +46,24 @@ type SealedVolumeData struct {
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
+}
+
+func cleanKubeName(s string) (d string) {
+	d = strings.ReplaceAll(s, "_", "-")
+	d = strings.ToLower(d)
+	return
+}
+
+func (s SealedVolumeData) DefaultSecret() (string, string) {
+	secretName := fmt.Sprintf("%s-%s", s.VolumeName, s.PartitionLabel)
+	secretPath := "passphrase"
+	if s.SecretName != "" {
+		secretName = s.SecretName
+	}
+	if s.SecretPath != "" {
+		secretPath = s.SecretPath
+	}
+	return cleanKubeName(secretName), cleanKubeName(secretPath)
 }
 
 func writeRead(conn *websocket.Conn, input []byte) ([]byte, error) {
@@ -148,14 +167,7 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 			}
 
 			if v.HasPassphrase() && !v.HasError() {
-				secretName := fmt.Sprintf("%s-%s", sealedVolumeData.VolumeName, sealedVolumeData.PartitionLabel)
-				secretPath := "passphrase"
-				if sealedVolumeData.SecretName != "" {
-					secretName = sealedVolumeData.SecretName
-				}
-				if sealedVolumeData.SecretPath != "" {
-					secretPath = sealedVolumeData.SecretPath
-				}
+				secretName, secretPath := sealedVolumeData.DefaultSecret()
 				_, err := kclient.CoreV1().Secrets(namespace).Get(ctx, secretName, v1.GetOptions{})
 				if err != nil {
 					if !apierrors.IsNotFound(err) {
@@ -180,7 +192,7 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 					}
 					_, err := kclient.CoreV1().Secrets(namespace).Create(ctx, &secret, v1.CreateOptions{})
 					if err != nil {
-						fmt.Println("failed during secret creation")
+						fmt.Println("failed during secret creation:", err.Error())
 					}
 				} else {
 					fmt.Println("Posted for already existing secret - ignoring")
@@ -235,14 +247,7 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 
 			writer, _ := conn.NextWriter(websocket.BinaryMessage)
 			if !sealedVolumeData.Quarantined {
-				secretName := fmt.Sprintf("%s-%s", sealedVolumeData.VolumeName, sealedVolumeData.PartitionLabel)
-				secretPath := "passphrase"
-				if sealedVolumeData.SecretName != "" {
-					secretName = sealedVolumeData.SecretName
-				}
-				if sealedVolumeData.SecretPath != "" {
-					secretPath = sealedVolumeData.SecretPath
-				}
+				secretName, secretPath := sealedVolumeData.DefaultSecret()
 
 				// 1. The admin sets a specific cleartext password from Kube manager
 				//      SealedVolume -> with a secret .
