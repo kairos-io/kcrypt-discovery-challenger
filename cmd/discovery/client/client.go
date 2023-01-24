@@ -9,6 +9,7 @@ import (
 
 	"github.com/jaypipes/ghw/pkg/block"
 	"github.com/kairos-io/kairos-challenger/pkg/constants"
+	"github.com/kairos-io/kairos-challenger/pkg/payload"
 	"github.com/kairos-io/kcrypt/pkg/bus"
 	"github.com/kairos-io/tpm-helpers"
 	"github.com/mudler/go-pluggable"
@@ -57,6 +58,28 @@ func (c *Client) Start() error {
 	return factory.Run(pluggable.EventType(os.Args[1]), os.Stdin, os.Stdout)
 }
 
+func (c *Client) generatePass(postEndpoint string, p *block.Partition) error {
+
+	rand := utils.RandomString(32)
+	pass, err := tpm.EncryptBlob([]byte(rand))
+	if err != nil {
+		return err
+	}
+	bpass := base64.RawURLEncoding.EncodeToString(pass)
+
+	opts := []tpm.Option{
+		tpm.WithAdditionalHeader("label", p.Label),
+		tpm.WithAdditionalHeader("name", p.Name),
+		tpm.WithAdditionalHeader("uuid", p.UUID),
+	}
+	conn, err := tpm.Connection(postEndpoint, opts...)
+	if err != nil {
+		return err
+	}
+
+	return conn.WriteJSON(payload.Data{Passphrase: bpass, GeneratedBy: constants.TPMSecret})
+}
+
 func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err error) {
 	// IF we don't have any server configured, just do local
 	if c.Config.Kcrypt.Challenger.Server == "" {
@@ -66,33 +89,19 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 	challengeEndpoint := fmt.Sprintf("%s/getPass", c.Config.Kcrypt.Challenger.Server)
 	postEndpoint := fmt.Sprintf("%s/postPass", c.Config.Kcrypt.Challenger.Server)
 
-	// IF server doesn't have a pass for us, then we generate one and we set it
-	if _, _, err := getPass(challengeEndpoint, p); err == errPartNotFound {
-		rand := utils.RandomString(32)
-		pass, err := tpm.EncryptBlob([]byte(rand))
-		if err != nil {
-			return "", err
-		}
-		bpass := base64.RawURLEncoding.EncodeToString(pass)
-
-		opts := []tpm.Option{
-			tpm.WithAdditionalHeader("label", p.Label),
-			tpm.WithAdditionalHeader("name", p.Name),
-			tpm.WithAdditionalHeader("uuid", p.UUID),
-		}
-		conn, err := tpm.Connection(postEndpoint, opts...)
-		if err != nil {
-			return "", err
-		}
-		err = conn.WriteJSON(map[string]string{"passphrase": bpass, constants.GeneratedByKey: constants.TPMSecret})
-		if err != nil {
-			return rand, err
-		}
-	}
-
 	for tries := 0; tries < attempts; tries++ {
 		var generated bool
 		pass, generated, err = getPass(challengeEndpoint, p)
+		if err == errPartNotFound {
+			// IF server doesn't have a pass for us, then we generate one and we set it
+			err = c.generatePass(postEndpoint, p)
+			if err != nil {
+				return
+			}
+			// Attempt to fetch again - validate that the server has it now
+			tries = 0
+			continue
+		}
 		if generated { // passphrase is encrypted
 			return c.decryptPassphrase(pass)
 		}

@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"time"
 
 	keyserverv1alpha1 "github.com/kairos-io/kairos-challenger/api/v1alpha1"
 	"github.com/kairos-io/kairos-challenger/pkg/constants"
+	"github.com/kairos-io/kairos-challenger/pkg/payload"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kairos-io/kairos-challenger/controllers"
@@ -86,14 +88,26 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 
 	m := http.NewServeMux()
 
+	errorMessage := func(writer io.WriteCloser, errMsg string) {
+		err := json.NewEncoder(writer).Encode(payload.Data{Error: errMsg})
+		if err != nil {
+			fmt.Println("error encoding the response to json", err.Error())
+		}
+		fmt.Println(errMsg)
+	}
+
 	m.HandleFunc("/postPass", func(w http.ResponseWriter, r *http.Request) {
 		conn, _ := upgrader.Upgrade(w, r, nil) // error ignored for sake of simplicity
 		for {
+
+			fmt.Println("Receiving passphrase")
 			if err := tpm.AuthRequest(r, conn); err != nil {
 				fmt.Println("error", err.Error())
 				return
 			}
 			defer conn.Close()
+			fmt.Println("[Receiving passphrase] auth succeeded")
+
 			token := r.Header.Get("Authorization")
 
 			hashEncoded, err := getPubHash(token)
@@ -101,11 +115,12 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 				fmt.Println("error decoding pubhash", err.Error())
 				return
 			}
+			fmt.Println("[Receiving passphrase] pubhash", hashEncoded)
 
 			label := r.Header.Get("label")
 			name := r.Header.Get("name")
 			uuid := r.Header.Get("uuid")
-			v := map[string]string{}
+			v := &payload.Data{}
 
 			volumeList := &keyserverv1alpha1.SealedVolumeList{}
 			if err := reconciler.List(ctx, volumeList, &client.ListOptions{Namespace: namespace}); err != nil {
@@ -127,13 +142,12 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 				return
 			}
 
-			if err := conn.ReadJSON(&v); err != nil {
+			if err := conn.ReadJSON(v); err != nil {
 				fmt.Println("error", err.Error())
 				return
 			}
 
-			pass, ok := v["passphrase"]
-			if ok {
+			if v.HasPassphrase() && !v.HasError() {
 				secretName := fmt.Sprintf("%s-%s", sealedVolumeData.VolumeName, sealedVolumeData.PartitionLabel)
 				secretPath := "passphrase"
 				if sealedVolumeData.SecretName != "" {
@@ -158,9 +172,9 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 							Name:      secretName,
 							Namespace: namespace,
 						},
-						Data: map[string][]byte{
-							secretPath:               []byte(pass),
-							constants.GeneratedByKey: []byte(v[constants.GeneratedByKey]),
+						StringData: map[string]string{
+							secretPath:               v.Passphrase,
+							constants.GeneratedByKey: v.GeneratedBy,
 						},
 						Type: "Opaque",
 					}
@@ -213,10 +227,12 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 			}, volumeList)
 
 			if sealedVolumeData == nil {
-				fmt.Println("No TPM Hash found for", hashEncoded)
+				writer, _ := conn.NextWriter(websocket.BinaryMessage)
+				errorMessage(writer, fmt.Sprintf("Invalid hash: %s", hashEncoded))
 				conn.Close()
 				return
 			}
+
 			writer, _ := conn.NextWriter(websocket.BinaryMessage)
 			if !sealedVolumeData.Quarantined {
 				secretName := fmt.Sprintf("%s-%s", sealedVolumeData.VolumeName, sealedVolumeData.PartitionLabel)
@@ -236,12 +252,10 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 				secret, err := kclient.CoreV1().Secrets(namespace).Get(ctx, secretName, v1.GetOptions{})
 				if err == nil {
 					passphrase := secret.Data[secretPath]
-					generatedBy, generated := secret.Data[constants.GeneratedByKey]
-					result := map[string]string{"passphrase": string(passphrase)}
-					if generated {
-						result[constants.GeneratedByKey] = string(generatedBy)
-					}
-					err = json.NewEncoder(writer).Encode(result)
+					generatedBy := secret.Data[constants.GeneratedByKey]
+
+					p := payload.Data{Passphrase: string(passphrase), GeneratedBy: string(generatedBy)}
+					err = json.NewEncoder(writer).Encode(p)
 					if err != nil {
 						fmt.Println("error encoding the passphrase to json", err.Error(), string(passphrase))
 					}
@@ -255,9 +269,11 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 					}
 
 					return
+				} else {
+					errorMessage(writer, fmt.Sprintf("No secret found for %s and %s", hashEncoded, sealedVolumeData.PartitionLabel))
 				}
 			} else {
-				fmt.Println("error getting the secret", err.Error())
+				errorMessage(writer, fmt.Sprintf("quarantined: %s", sealedVolumeData.PartitionLabel))
 				if err = conn.Close(); err != nil {
 					fmt.Println("error closing the connection", err.Error())
 					return

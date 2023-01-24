@@ -3,8 +3,10 @@ package client
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/kairos-io/kairos-challenger/pkg/constants"
+	"github.com/kairos-io/kairos-challenger/pkg/payload"
 
 	"github.com/jaypipes/ghw/pkg/block"
 	"github.com/kairos-io/tpm-helpers"
@@ -22,16 +24,21 @@ func getPass(server string, partition *block.Partition) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	result := map[string]interface{}{}
+	result := payload.Data{}
 	err = json.Unmarshal(msg, &result)
 	if err != nil {
 		return "", false, errors.Wrap(err, string(msg))
 	}
-	generatedBy, generated := result[constants.GeneratedByKey]
-	p, ok := result["passphrase"]
-	if ok {
-		return fmt.Sprint(p), generated && generatedBy == constants.TPMSecret, nil
+
+	if result.HasPassphrase() {
+		return fmt.Sprint(result.Passphrase), result.HasBeenGenerated() && result.GeneratedBy == constants.TPMSecret, nil
+	} else if result.HasError() {
+		if strings.Contains(result.Error, "No secret found for") {
+			return "", false, errPartNotFound
+		}
+		return "", false, fmt.Errorf(result.Error)
 	}
+
 	return "", false, errPartNotFound
 }
 
