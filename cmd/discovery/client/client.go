@@ -80,7 +80,7 @@ func (c *Client) generatePass(postEndpoint string, p *block.Partition) error {
 	return conn.WriteJSON(payload.Data{Passphrase: bpass, GeneratedBy: constants.TPMSecret})
 }
 
-func (c *Client) waitPass(p *block.Partition, attempts int) (string, error) {
+func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err error) {
 	// IF we don't have any server configured, just do local
 	if c.Config.Kcrypt.Challenger.Server == "" {
 		return localPass(c.Config)
@@ -91,12 +91,12 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (string, error) {
 
 	for tries := 0; tries < attempts; tries++ {
 		var generated bool
-		pass, generated, err := getPass(challengeEndpoint, p)
+		pass, generated, err = getPass(challengeEndpoint, p)
 		if err == errPartNotFound {
 			// IF server doesn't have a pass for us, then we generate one and we set it
 			err = c.generatePass(postEndpoint, p)
 			if err != nil {
-				return "", err
+				return
 			}
 			// Attempt to fetch again - validate that the server has it now
 			tries = 0
@@ -106,14 +106,14 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (string, error) {
 			return c.decryptPassphrase(pass)
 		}
 
-		if err == nil { // passphrase avilable, no errors
-			return "", err
+		if err == nil || err == errPartNotFound { // passphrase not encrypted or not available
+			return
 		}
 
 		time.Sleep(1 * time.Second) // network errors? retry
 	}
 
-	return "", fmt.Errorf("could not get passphrase from remote endpoint")
+	return
 }
 
 // decryptPassphrase decodes (base64) and decrypts the passphrase returned
