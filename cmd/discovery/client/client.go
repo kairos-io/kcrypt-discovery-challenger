@@ -106,7 +106,7 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 			return c.decryptPassphrase(pass)
 		}
 
-		if err == nil || err == errPartNotFound { // passphrase not encrypted or not available
+		if err == nil { // passphrase available, no errors
 			return
 		}
 
