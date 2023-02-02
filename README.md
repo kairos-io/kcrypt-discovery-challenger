@@ -3,6 +3,12 @@
 | :exclamation: | This is experimental! |
 |-|:-|
 
+
+<p align="center">
+  <a href="https://github.com/kairos-io/kcrypt-challenger/issues"><img src="https://img.shields.io/github/issues/kairos-io/kcrypt-challenger"></a>
+  <a href="https://github.com/kairos-io/kcrypt-challenger/actions/workflows/e2e-tests.yml"> <img src="https://github.com/kairos-io/kairos/actions/workflows/e2e-tests.yaml/badge.svg"></a>
+</p>
+
 This is the Kairos kcrypt-challenger Kubernetes Native Extension. 
 
 To install, use helm:
