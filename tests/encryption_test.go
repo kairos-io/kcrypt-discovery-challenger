@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path"
 	"strconv"
+	"strings"
 	"syscall"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -27,10 +28,15 @@ var _ = Describe("local encrypted passphrase", func() {
 	})
 
 	JustBeforeEach(func() {
-		out, err := vm.Sudo(fmt.Sprintf(`cat << EOF > config.yaml
-%s
-`, config))
-		Expect(err).ToNot(HaveOccurred(), out)
+		configFile, err := os.CreateTemp("", "")
+		Expect(err).ToNot(HaveOccurred())
+		defer os.Remove(configFile.Name())
+
+		err = os.WriteFile(configFile.Name(), []byte(config), 0744)
+		Expect(err).ToNot(HaveOccurred())
+
+		err = vm.Scp(configFile.Name(), "config.yaml", "0744")
+		Expect(err).ToNot(HaveOccurred())
 
 		installationOutput, err = vm.Sudo("set -o pipefail && kairos-agent manual-install --device auto config.yaml 2>&1 | tee manual-install.txt")
 		Expect(err).ToNot(HaveOccurred(), installationOutput)
@@ -68,7 +74,7 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
-EOF`
+`
 		})
 
 		It("boots and has an encrypted partition", func() {
@@ -92,14 +98,14 @@ EOF`
 apiVersion: keyserver.kairos.io/v1alpha1
 kind: SealedVolume
 metadata:
-    name: %[1]s
-    namespace: default
+  name: "%[1]s"
+  namespace: default
 spec:
   TPMHash: "%[1]s"
   partitions:
     - label: COS_PERSISTENT
   quarantined: false
-`, tpmHash))
+`, strings.TrimSpace(tpmHash)))
 
 			config = fmt.Sprintf(`#cloud-config
 
@@ -121,8 +127,7 @@ kcrypt:
     nv_index: ""
     c_index: ""
     tpm_device: ""
-
-EOF`, os.Getenv("KMS_ADDRESS"))
+`, os.Getenv("KMS_ADDRESS"))
 		})
 
 		AfterEach(func() {
@@ -145,7 +150,7 @@ EOF`, os.Getenv("KMS_ADDRESS"))
 			)
 
 			secretOut, err := cmd.CombinedOutput()
-			Expect(err).ToNot(HaveOccurred())
+			Expect(err).ToNot(HaveOccurred(), secretOut)
 			Expect(string(secretOut)).To(MatchRegexp("tpm"))
 		})
 	})
@@ -207,7 +212,7 @@ kcrypt:
     c_index: ""
     tpm_device: ""
 
-EOF`, os.Getenv("KMS_ADDRESS"))
+`, os.Getenv("KMS_ADDRESS"))
 		})
 
 		AfterEach(func() {
@@ -227,6 +232,33 @@ EOF`, os.Getenv("KMS_ADDRESS"))
 			Expect(err).ToNot(HaveOccurred(), out)
 			Expect(out).To(MatchRegexp("TYPE=\"crypto_LUKS\" PARTLABEL=\"persistent\""), out)
 			Expect(out).To(MatchRegexp("/dev/mapper.*LABEL=\"COS_PERSISTENT\""), out)
+		})
+	})
+
+	When("the key management server is listening on https", func() {
+		BeforeEach(func() {
+			// TODO:
+			// - Create and ExternalNames service that points to 10.0.2.2.sslip.io (the server)
+			// - Create an ingress for the above service with a certificate generated
+			//   by cert-manager
+
+			// Create a service that points to the server running j
+			// https://github.com/traefik/traefik/issues/1816#issuecomment-322543677
+		})
+		When("the certificate is pinned on the configuration", func() {
+			It("successfully talks to the server", func() {
+				// TODO: Maybe do something simpler than installation to keep things fast?
+				// Something that proves we talked to the server.
+				// Cert should be valid for a magic domain (e.g. sslip.io). We can use
+				// cert-manager to issue one.
+			})
+		})
+		When("the certificate signed by a well known CA (system certs)", func() {
+			It("successfully talks to the server", func() {
+				// TODO: How do we get a properly signed cert? Maybe do that once,
+				// and put the cert is the assets directory?
+				// Is it possible to have a signed cert without a proper domain?
+			})
 		})
 	})
 })

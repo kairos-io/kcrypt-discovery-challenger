@@ -1,0 +1,16 @@
+# Adds namespace to all resources.
+namespace: default
+
+bases:
+- ../../config/default
+
+resources:
+- challenger-server-ingress.yaml
+- cluster-issuer.yaml
+
+patchesStrategicMerge:
+# Fix labels and selectors to make challenger server accessible
+- challenger-patch.yaml
+# TODO: Implement 2 ingress resources, one for http and one for https (with cert-manager cert)
+# or maybe it can be one to server both. The cert should be valid for 10.0.2.2.sslip.io
+# which is how the qemu vm will access the server.
