@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/kairos-io/kcrypt-challenger/issues"><img src="https://img.shields.io/github/issues/kairos-io/kcrypt-challenger"></a>
-  <a href="https://github.com/kairos-io/kcrypt-challenger/actions/workflows/e2e-tests.yml"> <img src="https://github.com/kairos-io/kcrypt-challenger/actions/workflows/e2e-tests.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/kairos-io/kcrypt-challenger/actions/workflows/e2e-tests.yml?query=branch%3Amain"> <img src="https://github.com/kairos-io/kcrypt-challenger/actions/workflows/e2e-tests.yml/badge.svg?branch=main"></a>
 </p>
 
 This is the Kairos kcrypt-challenger Kubernetes Native Extension. 
