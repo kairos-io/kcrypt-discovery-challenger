@@ -236,23 +236,64 @@ kcrypt:
 	})
 
 	When("the key management server is listening on https", func() {
-		BeforeEach(func() {
-			// TODO:
-			// - Create and ExternalNames service that points to 10.0.2.2.sslip.io (the server)
-			// - Create an ingress for the above service with a certificate generated
-			//   by cert-manager
+		var tpmHash string
+		var err error
 
-			// Create a service that points to the server running j
-			// https://github.com/traefik/traefik/issues/1816#issuecomment-322543677
+		BeforeEach(func() {
+			tpmHash, err = vm.Sudo("/system/discovery/kcrypt-discovery-challenger")
+			Expect(err).ToNot(HaveOccurred(), tpmHash)
+
+			kubectlApplyYaml(fmt.Sprintf(`---
+apiVersion: keyserver.kairos.io/v1alpha1
+kind: SealedVolume
+metadata:
+  name: "%[1]s"
+  namespace: default
+spec:
+  TPMHash: "%[1]s"
+  partitions:
+    - label: COS_PERSISTENT
+  quarantined: false
+`, strings.TrimSpace(tpmHash)))
 		})
-		When("the certificate is pinned on the configuration", func() {
+
+		FWhen("the certificate is pinned on the configuration", func() {
+			BeforeEach(func() {
+				// TODO: Pin the certificate here
+				config = fmt.Sprintf(`#cloud-config
+
+	hostname: metal-{{ trunc 4 .MachineID }}
+	users:
+	- name: kairos
+		passwd: kairos
+
+	install:
+		encrypted_partitions:
+		- COS_PERSISTENT
+		grub_options:
+			extra_cmdline: "rd.neednet=1"
+		reboot: false # we will reboot manually
+
+	kcrypt:
+		challenger:
+			challenger_server: "https://%s"
+			nv_index: ""
+			c_index: ""
+			tpm_device: ""
+	`, os.Getenv("KMS_ADDRESS"))
+			})
+
 			It("successfully talks to the server", func() {
 				// TODO: Maybe do something simpler than installation to keep things fast?
 				// Something that proves we talked to the server.
-				// Cert should be valid for a magic domain (e.g. sslip.io). We can use
-				// cert-manager to issue one.
+				vm.EventuallyConnects(1200)
+				out, err := vm.Sudo("blkid")
+				Expect(err).ToNot(HaveOccurred(), out)
+				Expect(out).To(MatchRegexp("TYPE=\"crypto_LUKS\" PARTLABEL=\"persistent\""), out)
+				Expect(out).To(MatchRegexp("/dev/mapper.*LABEL=\"COS_PERSISTENT\""), out)
 			})
 		})
+
 		When("the certificate signed by a well known CA (system certs)", func() {
 			It("successfully talks to the server", func() {
 				// TODO: How do we get a properly signed cert? Maybe do that once,
