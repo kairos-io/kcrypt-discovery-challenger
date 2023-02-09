@@ -70,6 +70,7 @@ func (c *Client) generatePass(postEndpoint string, p *block.Partition) error {
 
 	opts := []tpm.Option{
 		tpm.WithCAs([]byte(c.Config.Kcrypt.Challenger.Certificate)),
+		tpm.AppendCustomCAToSystemCA,
 		tpm.WithAdditionalHeader("label", p.Label),
 		tpm.WithAdditionalHeader("name", p.Name),
 		tpm.WithAdditionalHeader("uuid", p.UUID),

@@ -327,17 +327,6 @@ kcrypt:
 				Expect(out).To(MatchRegexp("could not encrypt partition.*x509: certificate signed by unknown authority"))
 			})
 		})
-
-		When("the certificate signed by a well known CA (system certs)", func() {
-			BeforeEach(func() {
-				Skip("No way to implement")
-			})
-			It("successfully talks to the server", func() {
-				// TODO: How do we get a properly signed cert? Maybe do that once,
-				// and put the cert is the assets directory?
-				// Is it possible to have a signed cert without a proper domain?
-			})
-		})
 	})
 })
 
