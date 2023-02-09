@@ -68,6 +68,7 @@ func (c *Client) generatePass(postEndpoint string, p *block.Partition) error {
 	bpass := base64.RawURLEncoding.EncodeToString(pass)
 
 	opts := []tpm.Option{
+		tpm.WithCAs([]byte(c.Config.Kcrypt.Challenger.Certificate)),
 		tpm.WithAdditionalHeader("label", p.Label),
 		tpm.WithAdditionalHeader("name", p.Name),
 		tpm.WithAdditionalHeader("uuid", p.UUID),
@@ -91,7 +92,7 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 
 	for tries := 0; tries < attempts; tries++ {
 		var generated bool
-		pass, generated, err = getPass(challengeEndpoint, p)
+		pass, generated, err = getPass(challengeEndpoint, c.Config.Kcrypt.Challenger.Certificate, p)
 		if err == errPartNotFound {
 			// IF server doesn't have a pass for us, then we generate one and we set it
 			err = c.generatePass(postEndpoint, p)
@@ -110,6 +111,7 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 			return
 		}
 
+		fmt.Printf("Failed with error: %s . Will retry.\n", err.Error())
 		time.Sleep(1 * time.Second) // network errors? retry
 	}
 

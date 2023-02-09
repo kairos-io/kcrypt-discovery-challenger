@@ -16,8 +16,9 @@ type Config struct {
 			// Non-volatile index memory: where we store the encrypted passphrase (offline mode)
 			NVIndex string `yaml:"nv_index,omitempty"`
 			// Certificate index: this is where the rsa pair that decrypts the passphrase lives
-			CIndex    string `yaml:"c_index,omitempty"`
-			TPMDevice string `yaml:"tpm_device,omitempty"`
+			CIndex      string `yaml:"c_index,omitempty"`
+			TPMDevice   string `yaml:"tpm_device,omitempty"`
+			Certificate string `yaml:"certificate,omitempty"`
 		}
 	}
 }
