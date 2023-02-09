@@ -37,6 +37,9 @@ func getPass(server, certificate string, partition *block.Partition) (string, bo
 		if strings.Contains(result.Error, "No secret found for") {
 			return "", false, errPartNotFound
 		}
+		if strings.Contains(result.Error, "x509: certificate signed by unknown authority") {
+			return "", false, errBadCertificate
+		}
 		return "", false, fmt.Errorf(result.Error)
 	}
 

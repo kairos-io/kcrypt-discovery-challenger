@@ -43,8 +43,6 @@ var _ = Describe("local encrypted passphrase", func() {
 
 		installationOutput, err = vm.Sudo("set -o pipefail && kairos-agent manual-install --device auto config.yaml 2>&1 | tee manual-install.txt")
 		Expect(err).ToNot(HaveOccurred(), installationOutput)
-
-		vm.Reboot()
 	})
 
 	AfterEach(func() {
@@ -81,6 +79,7 @@ users:
 		})
 
 		It("boots and has an encrypted partition", func() {
+			vm.Reboot()
 			vm.EventuallyConnects(1200)
 			out, err := vm.Sudo("blkid")
 			Expect(err).ToNot(HaveOccurred(), out)
@@ -141,6 +140,7 @@ kcrypt:
 
 		It("creates a passphrase and a key/pair to decrypt it", func() {
 			// Expect a LUKS partition
+			vm.Reboot()
 			vm.EventuallyConnects(1200)
 			out, err := vm.Sudo("blkid")
 			Expect(err).ToNot(HaveOccurred(), out)
@@ -230,6 +230,7 @@ kcrypt:
 
 		It("creates uses the existing passphrase to decrypt it", func() {
 			// Expect a LUKS partition
+			vm.Reboot()
 			vm.EventuallyConnects(1200)
 			out, err := vm.Sudo("blkid")
 			Expect(err).ToNot(HaveOccurred(), out)
@@ -286,8 +287,7 @@ install:
 			})
 
 			It("successfully talks to the server", func() {
-				// TODO: Maybe do something simpler than installation to keep things fast?
-				// Something that proves we talked to the server.
+				vm.Reboot()
 				vm.EventuallyConnects(1200)
 				out, err := vm.Sudo("blkid")
 				Expect(err).ToNot(HaveOccurred(), out)
@@ -321,19 +321,17 @@ kcrypt:
 `, os.Getenv("KMS_ADDRESS"))
 			})
 
-			// TODO:
 			It("fails to talk to the server", func() {
-				// TODO: Maybe do something simpler than installation to keep things fast?
-				// Something that proves we talked to the server.
-				//vm.EventuallyConnects(1200)
-				// out, err := vm.Sudo("blkid")
-				// Expect(err).ToNot(HaveOccurred(), out)
-				// Expect(out).To(MatchRegexp("TYPE=\"crypto_LUKS\" PARTLABEL=\"persistent\""), out)
-				// Expect(out).To(MatchRegexp("/dev/mapper.*LABEL=\"COS_PERSISTENT\""), out)
+				out, err := vm.Sudo("cat manual-install.txt")
+				Expect(err).ToNot(HaveOccurred(), out)
+				Expect(out).To(MatchRegexp("could not encrypt partition.*x509: certificate signed by unknown authority"))
 			})
 		})
 
 		When("the certificate signed by a well known CA (system certs)", func() {
+			BeforeEach(func() {
+				Skip("No way to implement")
+			})
 			It("successfully talks to the server", func() {
 				// TODO: How do we get a properly signed cert? Maybe do that once,
 				// and put the cert is the assets directory?

@@ -17,6 +17,7 @@ import (
 )
 
 var errPartNotFound error = fmt.Errorf("pass for partition not found")
+var errBadCertificate error = fmt.Errorf("unknown certificate")
 
 func NewClient() (*Client, error) {
 	conf, err := unmarshalConfig()
@@ -103,8 +104,13 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 			tries = 0
 			continue
 		}
+
 		if generated { // passphrase is encrypted
 			return c.decryptPassphrase(pass)
+		}
+
+		if err == errBadCertificate { // No need to retry, won't succeed.
+			return
 		}
 
 		if err == nil { // passphrase available, no errors
