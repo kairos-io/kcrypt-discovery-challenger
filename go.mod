@@ -16,7 +16,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.8.1
 	github.com/onsi/gomega v1.26.0
 	github.com/pkg/errors v0.9.1
-	github.com/spectrocloud/peg v0.0.0-20230214084503-7d0e96a45ad3
+	github.com/spectrocloud/peg v0.0.0-20230214140930-4d6672f825b2
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.24.2
 	k8s.io/apimachinery v0.24.2
