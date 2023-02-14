@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,10 +23,35 @@ var vm VM
 
 var _ = Describe("local encrypted passphrase", func() {
 	var config string
+	var vmStillNeeded bool // When false, a stopped VM should stop execution
+	var ctx context.Context
 
 	BeforeEach(func() {
+		vmStillNeeded = true
 		RegisterFailHandler(printInstallationOutput)
-		vm = startVM()
+		ctx, vm = startVM()
+		fmt.Printf("\nvm.StateDir = %+v\n", vm.StateDir)
+
+		go func() {
+			defer GinkgoRecover()
+			<-ctx.Done()
+			if vmStillNeeded {
+				stdout, err := os.ReadFile(path.Join(vm.StateDir, "stdout"))
+				Expect(err).ToNot(HaveOccurred())
+				stderr, err := os.ReadFile(path.Join(vm.StateDir, "stderr"))
+				Expect(err).ToNot(HaveOccurred())
+				serialLog, err := os.ReadFile(path.Join(vm.StateDir, "serial.log"))
+				Expect(err).ToNot(HaveOccurred())
+
+				fmt.Printf("stdout: %s\n", stdout)
+				fmt.Printf("stderr: %s\n", stderr)
+				fmt.Printf("serial: %s\n", serialLog)
+
+				// Although we call `Fail`, ginkgo still waits for `EventuallyConnects`
+				// below to be done for some reason. Something to do with locks probably.
+				Fail("VM exited before the test was done")
+			}
+		}()
 
 		vm.EventuallyConnects(1200)
 	})
@@ -46,6 +72,7 @@ var _ = Describe("local encrypted passphrase", func() {
 	})
 
 	AfterEach(func() {
+		vmStillNeeded = false // We are done. Don't fail when we exit the VM.
 		err := vm.Destroy(func(vm VM) {
 			// Stop TPM emulator
 			tpmPID, err := os.ReadFile(path.Join(vm.StateDir, "tpm", "pid"))
@@ -140,7 +167,7 @@ kcrypt:
 
 		It("creates a passphrase and a key/pair to decrypt it", func() {
 			// Expect a LUKS partition
-			vm.Reboot()
+			vm.Reboot(750)
 			vm.EventuallyConnects(1200)
 			out, err := vm.Sudo("blkid")
 			Expect(err).ToNot(HaveOccurred(), out)

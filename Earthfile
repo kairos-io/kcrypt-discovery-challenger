@@ -1,5 +1,5 @@
 VERSION 0.6
-ARG BASE_IMAGE=quay.io/kairos/core-opensuse:latest
+ARG BASE_IMAGE=quay.io/kairos/core-opensuse-leap:latest
 ARG OSBUILDER_IMAGE=quay.io/kairos/osbuilder-tools
 ARG GO_VERSION=1.18
 ARG LUET_VERSION=0.33.0

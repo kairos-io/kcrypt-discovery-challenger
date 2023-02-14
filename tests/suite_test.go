@@ -42,7 +42,7 @@ func pass() string {
 	return pass
 }
 
-func startVM() VM {
+func startVM() (context.Context, VM) {
 	if os.Getenv("ISO") == "" {
 		fmt.Println("ISO missing")
 		os.Exit(1)
@@ -86,10 +86,14 @@ func startVM() VM {
 			fmt.Printf("\nVM Aborted: %s %s Exit status: %s\n", out, err, status)
 		}),
 		types.WithStateDir(stateDir),
+		// Serial output to file: https://superuser.com/a/1412150
 		func(m *types.MachineConfig) error {
 			m.Args = append(m.Args,
 				"-chardev", fmt.Sprintf("socket,id=chrtpm,path=%s/swtpm-sock", path.Join(stateDir, "tpm")),
 				"-tpmdev", "emulator,id=tpm0,chardev=chrtpm", "-device", "tpm-tis,tpmdev=tpm0",
+				"-chardev", fmt.Sprintf("stdio,mux=on,id=char0,logfile=%s,signal=off", path.Join(stateDir, "serial.log")),
+				"-serial", "chardev:char0",
+				"-mon", "chardev=char0",
 			)
 			return nil
 		},
@@ -119,7 +123,7 @@ func startVM() VM {
 
 	vm := NewVM(m, stateDir)
 
-	err = vm.Start(context.Background())
+	ctx, err := vm.Start(context.Background())
 	Expect(err).ToNot(HaveOccurred())
 
 	if os.Getenv("MACHINE_SPICY") != "" {
@@ -130,7 +134,7 @@ func startVM() VM {
 		Expect(err).ToNot(HaveOccurred())
 	}
 
-	return vm
+	return ctx, vm
 }
 
 // return the PID of the swtpm (to be killed later) and the state directory

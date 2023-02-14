@@ -55,4 +55,4 @@ kubectl apply -k "$SCRIPT_DIR/../tests/assets/"
 # https://stackoverflow.com/a/6752280
 export KMS_ADDRESS="10.0.2.2.challenger.sslip.io"
 
-PATH=$PATH:$GOPATH/bin ginkgo --nodes $GINKGO_NODES --fail-fast -r ./tests/
+PATH=$PATH:$GOPATH/bin ginkgo -v --nodes $GINKGO_NODES --fail-fast -r ./tests/
