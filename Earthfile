@@ -99,6 +99,7 @@ e2e-tests-image:
 
 e2e-tests:
     FROM +e2e-tests-image
+    ARG LABEL
 
     WITH DOCKER --allow-privileged
         RUN ./scripts/e2e-tests.sh

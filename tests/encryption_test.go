@@ -20,7 +20,7 @@ import (
 var installationOutput string
 var vm VM
 
-var _ = Describe("local encrypted passphrase", func() {
+var _ = Describe("kcrypt encryption", func() {
 	var config string
 
 	BeforeEach(func() {
@@ -63,7 +63,7 @@ var _ = Describe("local encrypted passphrase", func() {
 	})
 
 	// https://kairos.io/docs/advanced/partition_encryption/#offline-mode
-	When("doing local encryption", func() {
+	When("doing local encryption", Label("local-encryption"), func() {
 		BeforeEach(func() {
 			config = `#cloud-config
 
@@ -89,7 +89,7 @@ users:
 	})
 
 	//https://kairos.io/docs/advanced/partition_encryption/#online-mode
-	When("using a remote key management server (automated passphrase generation)", func() {
+	When("using a remote key management server (automated passphrase generation)", Label("remote-auto"), func() {
 		var tpmHash string
 		var err error
 
@@ -160,7 +160,7 @@ kcrypt:
 	})
 
 	// https://kairos.io/docs/advanced/partition_encryption/#scenario-static-keys
-	When("using a remote key management server (static keys)", func() {
+	When("using a remote key management server (static keys)", Label("remote-static"), func() {
 		var tpmHash string
 		var err error
 
@@ -262,7 +262,7 @@ spec:
 `, strings.TrimSpace(tpmHash)))
 		})
 
-		When("the certificate is pinned on the configuration", func() {
+		When("the certificate is pinned on the configuration", Label("remote-https-pinned"), func() {
 			BeforeEach(func() {
 				cert := getChallengerServerCert()
 				kcryptConfig := createConfigWithCert(fmt.Sprintf("https://%s", os.Getenv("KMS_ADDRESS")), cert)
@@ -297,7 +297,7 @@ install:
 			})
 		})
 
-		When("the no certificate is set in the configuration", func() {
+		When("the no certificate is set in the configuration", Label("remote-https-bad-cert"), func() {
 			BeforeEach(func() {
 				config = fmt.Sprintf(`#cloud-config
 

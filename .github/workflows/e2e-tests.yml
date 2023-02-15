@@ -12,6 +12,15 @@ on:
 jobs:
   e2e-tests:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+       include:
+         - label: "local-encryption"
+         - label: "remote-auto"
+         - label: "remote-static"
+         - label: "remote-https-pinned"
+         - label: "remote-https-bad-cert"
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -19,4 +28,4 @@ jobs:
           fetch-depth: 0
       - name: Run tests
         run: |
-          ./earthly.sh +e2e-tests
+          ./earthly.sh +e2e-tests --LABEL=${{ matrix.label }}
