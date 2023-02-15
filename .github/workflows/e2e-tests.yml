@@ -35,7 +35,7 @@ jobs:
           LABEL: ${{ matrix.label }}
         run: |
           sudo apt update && \
-          sudo apt install git qemu-system-x86 qemu-utils swtpm jq make glibc-tools \
+          sudo apt install -y git qemu-system-x86 qemu-utils swtpm jq make glibc-tools \
           openssl curl gettext ca-certificates curl gnupg lsb-release
 
           curl -L  https://github.com/mudler/luet/releases/download/0.33.0/luet-0.33.0-linux-amd64 -o luet
