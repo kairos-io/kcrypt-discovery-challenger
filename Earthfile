@@ -1,5 +1,5 @@
 VERSION 0.6
-ARG BASE_IMAGE=quay.io/kairos/core-opensuse:latest
+ARG BASE_IMAGE=quay.io/kairos/core-opensuse-leap:latest
 ARG OSBUILDER_IMAGE=quay.io/kairos/osbuilder-tools
 ARG GO_VERSION=1.18
 ARG LUET_VERSION=0.33.0
@@ -73,7 +73,7 @@ luet:
 
 e2e-tests-image:
     FROM opensuse/tumbleweed
-    RUN zypper in -y go git qemu-x86 qemu-arm qemu-tools swtpm docker jq docker-compose make glibc libopenssl-devel curl
+    RUN zypper in -y go git qemu-x86 qemu-arm qemu-tools swtpm docker jq docker-compose make glibc libopenssl-devel curl gettext-runtime
     ENV GOPATH="/go"
 
     COPY . /test
@@ -99,6 +99,7 @@ e2e-tests-image:
 
 e2e-tests:
     FROM +e2e-tests-image
+    ARG LABEL
 
     WITH DOCKER --allow-privileged
         RUN ./scripts/e2e-tests.sh

@@ -6,36 +6,44 @@ import (
 	"os/exec"
 	"path"
 	"strconv"
+	"strings"
 	"syscall"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/spectrocloud/peg/matcher"
+	"gopkg.in/yaml.v3"
+
+	client "github.com/kairos-io/kairos-challenger/cmd/discovery/client"
 )
 
 var installationOutput string
 var vm VM
 
-var _ = Describe("local encrypted passphrase", func() {
+var _ = Describe("kcrypt encryption", func() {
 	var config string
 
 	BeforeEach(func() {
 		RegisterFailHandler(printInstallationOutput)
-		vm = startVM()
+		_, vm = startVM()
+		fmt.Printf("\nvm.StateDir = %+v\n", vm.StateDir)
 
 		vm.EventuallyConnects(1200)
 	})
 
 	JustBeforeEach(func() {
-		out, err := vm.Sudo(fmt.Sprintf(`cat << EOF > config.yaml
-%s
-`, config))
-		Expect(err).ToNot(HaveOccurred(), out)
+		configFile, err := os.CreateTemp("", "")
+		Expect(err).ToNot(HaveOccurred())
+		defer os.Remove(configFile.Name())
+
+		err = os.WriteFile(configFile.Name(), []byte(config), 0744)
+		Expect(err).ToNot(HaveOccurred())
+
+		err = vm.Scp(configFile.Name(), "config.yaml", "0744")
+		Expect(err).ToNot(HaveOccurred())
 
 		installationOutput, err = vm.Sudo("set -o pipefail && kairos-agent manual-install --device auto config.yaml 2>&1 | tee manual-install.txt")
 		Expect(err).ToNot(HaveOccurred(), installationOutput)
-
-		vm.Reboot()
 	})
 
 	AfterEach(func() {
@@ -55,7 +63,7 @@ var _ = Describe("local encrypted passphrase", func() {
 	})
 
 	// https://kairos.io/docs/advanced/partition_encryption/#offline-mode
-	When("doing local encryption", func() {
+	When("doing local encryption", Label("local-encryption"), func() {
 		BeforeEach(func() {
 			config = `#cloud-config
 
@@ -68,10 +76,11 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
-EOF`
+`
 		})
 
 		It("boots and has an encrypted partition", func() {
+			vm.Reboot()
 			vm.EventuallyConnects(1200)
 			out, err := vm.Sudo("blkid")
 			Expect(err).ToNot(HaveOccurred(), out)
@@ -80,7 +89,7 @@ EOF`
 	})
 
 	//https://kairos.io/docs/advanced/partition_encryption/#online-mode
-	When("using a remote key management server (automated passphrase generation)", func() {
+	When("using a remote key management server (automated passphrase generation)", Label("remote-auto"), func() {
 		var tpmHash string
 		var err error
 
@@ -92,14 +101,14 @@ EOF`
 apiVersion: keyserver.kairos.io/v1alpha1
 kind: SealedVolume
 metadata:
-    name: %[1]s
-    namespace: default
+  name: "%[1]s"
+  namespace: default
 spec:
   TPMHash: "%[1]s"
   partitions:
     - label: COS_PERSISTENT
   quarantined: false
-`, tpmHash))
+`, strings.TrimSpace(tpmHash)))
 
 			config = fmt.Sprintf(`#cloud-config
 
@@ -121,8 +130,7 @@ kcrypt:
     nv_index: ""
     c_index: ""
     tpm_device: ""
-
-EOF`, os.Getenv("KMS_ADDRESS"))
+`, os.Getenv("KMS_ADDRESS"))
 		})
 
 		AfterEach(func() {
@@ -133,6 +141,7 @@ EOF`, os.Getenv("KMS_ADDRESS"))
 
 		It("creates a passphrase and a key/pair to decrypt it", func() {
 			// Expect a LUKS partition
+			vm.Reboot(750)
 			vm.EventuallyConnects(1200)
 			out, err := vm.Sudo("blkid")
 			Expect(err).ToNot(HaveOccurred(), out)
@@ -145,13 +154,13 @@ EOF`, os.Getenv("KMS_ADDRESS"))
 			)
 
 			secretOut, err := cmd.CombinedOutput()
-			Expect(err).ToNot(HaveOccurred())
+			Expect(err).ToNot(HaveOccurred(), secretOut)
 			Expect(string(secretOut)).To(MatchRegexp("tpm"))
 		})
 	})
 
 	// https://kairos.io/docs/advanced/partition_encryption/#scenario-static-keys
-	When("using a remote key management server (static keys)", func() {
+	When("using a remote key management server (static keys)", Label("remote-static"), func() {
 		var tpmHash string
 		var err error
 
@@ -207,7 +216,7 @@ kcrypt:
     c_index: ""
     tpm_device: ""
 
-EOF`, os.Getenv("KMS_ADDRESS"))
+`, os.Getenv("KMS_ADDRESS"))
 		})
 
 		AfterEach(func() {
@@ -222,11 +231,102 @@ EOF`, os.Getenv("KMS_ADDRESS"))
 
 		It("creates uses the existing passphrase to decrypt it", func() {
 			// Expect a LUKS partition
+			vm.Reboot()
 			vm.EventuallyConnects(1200)
 			out, err := vm.Sudo("blkid")
 			Expect(err).ToNot(HaveOccurred(), out)
 			Expect(out).To(MatchRegexp("TYPE=\"crypto_LUKS\" PARTLABEL=\"persistent\""), out)
 			Expect(out).To(MatchRegexp("/dev/mapper.*LABEL=\"COS_PERSISTENT\""), out)
+		})
+	})
+
+	When("the key management server is listening on https", func() {
+		var tpmHash string
+		var err error
+
+		BeforeEach(func() {
+			tpmHash, err = vm.Sudo("/system/discovery/kcrypt-discovery-challenger")
+			Expect(err).ToNot(HaveOccurred(), tpmHash)
+
+			kubectlApplyYaml(fmt.Sprintf(`---
+apiVersion: keyserver.kairos.io/v1alpha1
+kind: SealedVolume
+metadata:
+  name: "%[1]s"
+  namespace: default
+spec:
+  TPMHash: "%[1]s"
+  partitions:
+    - label: COS_PERSISTENT
+  quarantined: false
+`, strings.TrimSpace(tpmHash)))
+		})
+
+		When("the certificate is pinned on the configuration", Label("remote-https-pinned"), func() {
+			BeforeEach(func() {
+				cert := getChallengerServerCert()
+				kcryptConfig := createConfigWithCert(fmt.Sprintf("https://%s", os.Getenv("KMS_ADDRESS")), cert)
+				kcryptConfigBytes, err := yaml.Marshal(kcryptConfig)
+				Expect(err).ToNot(HaveOccurred())
+				config = fmt.Sprintf(`#cloud-config
+
+hostname: metal-{{ trunc 4 .MachineID }}
+users:
+- name: kairos
+  passwd: kairos
+
+install:
+  encrypted_partitions:
+  - COS_PERSISTENT
+  grub_options:
+    extra_cmdline: "rd.neednet=1"
+  reboot: false # we will reboot manually
+
+%s
+
+`, string(kcryptConfigBytes))
+			})
+
+			It("successfully talks to the server", func() {
+				vm.Reboot()
+				vm.EventuallyConnects(1200)
+				out, err := vm.Sudo("blkid")
+				Expect(err).ToNot(HaveOccurred(), out)
+				Expect(out).To(MatchRegexp("TYPE=\"crypto_LUKS\" PARTLABEL=\"persistent\""), out)
+				Expect(out).To(MatchRegexp("/dev/mapper.*LABEL=\"COS_PERSISTENT\""), out)
+			})
+		})
+
+		When("the no certificate is set in the configuration", Label("remote-https-bad-cert"), func() {
+			BeforeEach(func() {
+				config = fmt.Sprintf(`#cloud-config
+
+hostname: metal-{{ trunc 4 .MachineID }}
+users:
+- name: kairos
+  passwd: kairos
+
+install:
+  encrypted_partitions:
+  - COS_PERSISTENT
+  grub_options:
+    extra_cmdline: "rd.neednet=1"
+  reboot: false # we will reboot manually
+
+kcrypt:
+  challenger:
+    challenger_server: "https://%s"
+    nv_index: ""
+    c_index: ""
+    tpm_device: ""
+`, os.Getenv("KMS_ADDRESS"))
+			})
+
+			It("fails to talk to the server", func() {
+				out, err := vm.Sudo("cat manual-install.txt")
+				Expect(err).ToNot(HaveOccurred(), out)
+				Expect(out).To(MatchRegexp("could not encrypt partition.*x509: certificate signed by unknown authority"))
+			})
 		})
 	})
 })
@@ -249,4 +349,42 @@ func kubectlApplyYaml(yamlData string) {
 	cmd := exec.Command("kubectl", "apply", "-f", yamlFile.Name())
 	out, err := cmd.CombinedOutput()
 	Expect(err).ToNot(HaveOccurred(), out)
+}
+
+func getChallengerServerCert() string {
+	cmd := exec.Command(
+		"kubectl", "get", "secret", "-n", "default", "kms-tls",
+		"-o", `go-template={{ index .data "ca.crt" | base64decode }}`)
+	out, err := cmd.CombinedOutput()
+	Expect(err).ToNot(HaveOccurred(), string(out))
+
+	return string(out)
+}
+
+func createConfigWithCert(server, cert string) client.Config {
+	return client.Config{
+		Kcrypt: struct {
+			Challenger struct {
+				Server      string "yaml:\"challenger_server,omitempty\""
+				NVIndex     string "yaml:\"nv_index,omitempty\""
+				CIndex      string "yaml:\"c_index,omitempty\""
+				TPMDevice   string "yaml:\"tpm_device,omitempty\""
+				Certificate string "yaml:\"certificate,omitempty\""
+			}
+		}{
+			Challenger: struct {
+				Server      string "yaml:\"challenger_server,omitempty\""
+				NVIndex     string "yaml:\"nv_index,omitempty\""
+				CIndex      string "yaml:\"c_index,omitempty\""
+				TPMDevice   string "yaml:\"tpm_device,omitempty\""
+				Certificate string "yaml:\"certificate,omitempty\""
+			}{
+				Server:      server,
+				NVIndex:     "",
+				CIndex:      "",
+				TPMDevice:   "",
+				Certificate: cert,
+			},
+		},
+	}
 }

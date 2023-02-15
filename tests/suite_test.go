@@ -42,7 +42,7 @@ func pass() string {
 	return pass
 }
 
-func startVM() VM {
+func startVM() (context.Context, VM) {
 	if os.Getenv("ISO") == "" {
 		fmt.Println("ISO missing")
 		os.Exit(1)
@@ -77,19 +77,44 @@ func startVM() VM {
 		types.WithSSHUser(user()),
 		types.WithSSHPass(pass()),
 		types.OnFailure(func(p *process.Process) {
-			out, _ := os.ReadFile(p.StdoutPath())
-			err, _ := os.ReadFile(p.StderrPath())
-			status, _ := p.ExitCode()
+			defer GinkgoRecover()
 
-			// We are explicitly killing the qemu process. We don't treat that as an error
-			// but we just print the output just in case.
-			fmt.Printf("\nVM Aborted: %s %s Exit status: %s\n", out, err, status)
+			var stdout, stderr, serial, status string
+
+			if stdoutBytes, err := os.ReadFile(p.StdoutPath()); err != nil {
+				stdout = fmt.Sprintf("Error reading stdout file: %s\n", err)
+			} else {
+				stdout = string(stdoutBytes)
+			}
+
+			if stderrBytes, err := os.ReadFile(p.StderrPath()); err != nil {
+				stderr = fmt.Sprintf("Error reading stderr file: %s\n", err)
+			} else {
+				stderr = string(stderrBytes)
+			}
+
+			if status, err = p.ExitCode(); err != nil {
+				status = fmt.Sprintf("Error reading exit code file: %s\n", err)
+			}
+
+			if serialBytes, err := os.ReadFile(path.Join(p.StateDir(), "serial.log")); err != nil {
+				serial = fmt.Sprintf("Error reading serial log file: %s\n", err)
+			} else {
+				serial = string(serialBytes)
+			}
+
+			Fail(fmt.Sprintf("\nVM Aborted.\nstdout: %s\nstderr: %s\nserial: %s\nExit status: %s\n",
+				stdout, stderr, serial, status))
 		}),
 		types.WithStateDir(stateDir),
+		// Serial output to file: https://superuser.com/a/1412150
 		func(m *types.MachineConfig) error {
 			m.Args = append(m.Args,
 				"-chardev", fmt.Sprintf("socket,id=chrtpm,path=%s/swtpm-sock", path.Join(stateDir, "tpm")),
 				"-tpmdev", "emulator,id=tpm0,chardev=chrtpm", "-device", "tpm-tis,tpmdev=tpm0",
+				"-chardev", fmt.Sprintf("stdio,mux=on,id=char0,logfile=%s,signal=off", path.Join(stateDir, "serial.log")),
+				"-serial", "chardev:char0",
+				"-mon", "chardev=char0",
 			)
 			return nil
 		},
@@ -119,7 +144,7 @@ func startVM() VM {
 
 	vm := NewVM(m, stateDir)
 
-	err = vm.Start(context.Background())
+	ctx, err := vm.Start(context.Background())
 	Expect(err).ToNot(HaveOccurred())
 
 	if os.Getenv("MACHINE_SPICY") != "" {
@@ -130,7 +155,7 @@ func startVM() VM {
 		Expect(err).ToNot(HaveOccurred())
 	}
 
-	return vm
+	return ctx, vm
 }
 
 // return the PID of the swtpm (to be killed later) and the state directory

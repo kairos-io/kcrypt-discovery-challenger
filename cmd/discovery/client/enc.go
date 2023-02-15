@@ -16,8 +16,10 @@ import (
 
 const DefaultNVIndex = "0x1500000"
 
-func getPass(server string, partition *block.Partition) (string, bool, error) {
+func getPass(server, certificate string, partition *block.Partition) (string, bool, error) {
 	msg, err := tpm.Get(server,
+		tpm.WithCAs([]byte(certificate)),
+		tpm.AppendCustomCAToSystemCA,
 		tpm.WithAdditionalHeader("label", partition.Label),
 		tpm.WithAdditionalHeader("name", partition.Name),
 		tpm.WithAdditionalHeader("uuid", partition.UUID))
@@ -35,6 +37,9 @@ func getPass(server string, partition *block.Partition) (string, bool, error) {
 	} else if result.HasError() {
 		if strings.Contains(result.Error, "No secret found for") {
 			return "", false, errPartNotFound
+		}
+		if strings.Contains(result.Error, "x509: certificate signed by unknown authority") {
+			return "", false, errBadCertificate
 		}
 		return "", false, fmt.Errorf(result.Error)
 	}
