@@ -26,6 +26,32 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
+      - name: Install Go
+        uses: actions/setup-go@v3
+        with:
+            go-version: '^1.19'
       - name: Run tests
+        env:
+          LABEL: ${{ matrix.label }}
         run: |
-          ./earthly.sh +e2e-tests --LABEL=${{ matrix.label }}
+          sudo apt update && \
+          sudo apt install git qemu-system-x86 qemu-utils swtpm jq make glibc-tools \
+          openssl curl gettext ca-certificates curl gnupg lsb-release
+
+          curl -L  https://github.com/mudler/luet/releases/download/0.33.0/luet-0.33.0-linux-amd64 -o luet
+          chmod +x luet
+          sudo mv luet /usr/bin/luet
+          sudo mkdir -p /etc/luet/repos.conf.d/
+          sudo luet repo add -y kairos --url quay.io/kairos/packages --type docker
+          LUET_NOLOCK=true sudo -E luet install -y container/kubectl utils/k3d
+
+          ./earthly.sh +iso
+          export ISO=$PWD/build/challenger.iso
+
+          go install -mod=mod github.com/onsi/ginkgo/v2/ginkgo
+          go get github.com/onsi/gomega/...
+          go get github.com/onsi/ginkgo/v2/ginkgo/internal@v2.7.1
+          go get github.com/onsi/ginkgo/v2/ginkgo/generators@v2.7.1
+          go get github.com/onsi/ginkgo/v2/ginkgo/labels@v2.7.1
+
+          ./scripts/e2e-tests.sh
