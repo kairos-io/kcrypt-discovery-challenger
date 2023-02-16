@@ -1,4 +1,4 @@
-VERSION 0.6.30
+VERSION 0.6
 ARG BASE_IMAGE=quay.io/kairos/core-ubuntu:latest
 ARG OSBUILDER_IMAGE=quay.io/kairos/osbuilder-tools
 ARG GO_VERSION=1.18
