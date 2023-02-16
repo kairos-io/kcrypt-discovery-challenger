@@ -17,17 +17,24 @@ image:
     COPY +build-challenger/kcrypt-discovery-challenger /system/discovery/kcrypt-discovery-challenger
     SAVE IMAGE $IMAGE
 
+image-rootfs:
+  FROM +image
+  SAVE ARTIFACT --keep-own /. rootfs
+
+grub-files:
+    FROM alpine
+    RUN apk add wget
+    RUN wget https://raw.githubusercontent.com/c3os-io/c3os/master/overlay/files-iso/boot/grub2/grub.cfg -O grub.cfg
+    SAVE ARTIFACT --keep-own grub.cfg grub.cfg
+
 iso:
     ARG OSBUILDER_IMAGE
     ARG ISO_NAME=challenger
     FROM $OSBUILDER_IMAGE
-    RUN zypper in -y jq docker
     WORKDIR /build
-    WITH DOCKER --allow-privileged --load $IMAGE=(+image --IMAGE=test)
-        RUN /entrypoint.sh --name $ISO_NAME --debug build-iso --date=false --local test --output /build/
-    END
-    # See: https://github.com/rancher/elemental-cli/issues/228
-    RUN sha256sum $ISO_NAME.iso > $ISO_NAME.iso.sha256
+    COPY --keep-own +grub-files/grub.cfg /build/files-iso/boot/grub2/grub.cfg
+    COPY --keep-own +image-rootfs/rootfs /build/rootfs
+    RUN /entrypoint.sh --name $ISO_NAME --debug build-iso --squash-no-compression --date=false --local --overlay-iso /build/files-iso --output /build/ dir:/build/rootfs
     SAVE ARTIFACT /build/$ISO_NAME.iso kairos.iso AS LOCAL build/$ISO_NAME.iso
     SAVE ARTIFACT /build/$ISO_NAME.iso.sha256 kairos.iso.sha256 AS LOCAL build/$ISO_NAME.iso.sha256
 
