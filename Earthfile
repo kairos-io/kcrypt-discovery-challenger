@@ -24,6 +24,10 @@ image-rootfs:
 grub-files:
     FROM alpine
     RUN apk add wget
+    # Hack to see if this gets fixed:
+    # https://github.com/earthly/earthly/issues/847
+    RUN ifconfig eth0 mtu 1200
+    RUN ifconfig cni0 mtu 1200
     RUN wget https://raw.githubusercontent.com/c3os-io/c3os/master/overlay/files-iso/boot/grub2/grub.cfg -O grub.cfg
     SAVE ARTIFACT --keep-own grub.cfg grub.cfg
 
