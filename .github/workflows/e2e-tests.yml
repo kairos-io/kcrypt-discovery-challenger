@@ -54,4 +54,15 @@ jobs:
           go get github.com/onsi/ginkgo/v2/ginkgo/generators@v2.7.1
           go get github.com/onsi/ginkgo/v2/ginkgo/labels@v2.7.1
 
+          # Configure earthly to use the docker mirror in CI
+          # https://docs.earthly.dev/ci-integration/pull-through-cache#configuring-earthly-to-use-the-cache
+          cat << EOF > ~/.earthly/config.yml
+          global:
+            buildkit_additional_config: |
+              [registry."docker.io"]
+                mirrors = ["registry.docker-mirror.svc.cluster.local:5000"]
+              [registry."registry.docker-mirror.svc.cluster.local:5000"]
+                insecure = true
+          EOF
+
           ./scripts/e2e-tests.sh
