@@ -42,7 +42,7 @@ var _ = Describe("kcrypt encryption", func() {
 		err = vm.Scp(configFile.Name(), "config.yaml", "0744")
 		Expect(err).ToNot(HaveOccurred())
 
-		installationOutput, err = vm.Sudo("set -o pipefail && kairos-agent manual-install --device auto config.yaml 2>&1 | tee manual-install.txt")
+		installationOutput, err = vm.Sudo("/bin/bash -c 'set -o pipefail && kairos-agent manual-install --device auto config.yaml 2>&1 | tee manual-install.txt'")
 		Expect(err).ToNot(HaveOccurred(), installationOutput)
 	})
 
