@@ -154,7 +154,7 @@ kcrypt:
 			)
 
 			secretOut, err := cmd.CombinedOutput()
-			Expect(err).ToNot(HaveOccurred(), secretOut)
+			Expect(err).ToNot(HaveOccurred(), string(secretOut))
 			Expect(string(secretOut)).To(MatchRegexp("tpm"))
 		})
 	})
