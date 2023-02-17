@@ -27,7 +27,11 @@ trap cleanup EXIT
 # Create a cluster and bind ports 80 and 443 on the host
 # This will allow us to access challenger server on 10.0.2.2 which is the IP
 # on which qemu "sees" the host.
-k3d cluster create "$CLUSTER_NAME" -p '80:80@server:0' -p '443:443@server:0' --image "$K3S_IMAGE"
+# We change the CIDR because k3s creates iptables rules that block DNS traffic to this CIDR
+# (something like that). If you run k3d inside a k3s cluster (inside a Pod), DNS won't work
+# inside the k3d server container unless you use a different CIDR.
+# Here we are avoiding CIDR "10.43.x.x"
+k3d cluster create "$CLUSTER_NAME" --k3s-arg "--cluster-cidr=10.49.0.1/16@server:0" --k3s-arg "--service-cidr=10.48.0.1/16@server:0" -p '80:80@server:0' -p '443:443@server:0' --image "$K3S_IMAGE"
 k3d kubeconfig get "$CLUSTER_NAME" > "$KUBECONFIG"
 
 # Build the docker image
