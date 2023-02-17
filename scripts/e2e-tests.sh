@@ -10,7 +10,7 @@ K3S_IMAGE="rancher/k3s:v1.26.1-k3s1"
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 CLUSTER_NAME=$(echo $RANDOM | md5sum | head -c 10; echo;)
-KUBECONFIG=$(mktemp)
+export KUBECONFIG=$(mktemp)
 
 # https://unix.stackexchange.com/a/423052
 getFreePort() {
