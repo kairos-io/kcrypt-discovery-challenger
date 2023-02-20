@@ -66,4 +66,5 @@ jobs:
                 insecure = true
           EOF
 
-          ./scripts/e2e-tests.sh
+          # We run with sudo to be able to access /dev/kvm
+          sudo -E ./scripts/e2e-tests.sh
