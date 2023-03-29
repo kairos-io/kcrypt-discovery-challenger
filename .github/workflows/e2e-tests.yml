@@ -27,7 +27,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
       - name: Run tests
         env:
           LABEL: ${{ matrix.label }}
