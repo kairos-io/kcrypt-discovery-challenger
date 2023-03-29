@@ -112,3 +112,8 @@ e2e-tests:
     WITH DOCKER --allow-privileged
         RUN ./scripts/e2e-tests.sh
     END
+
+yamllint:
+    FROM cytopia/yamllint
+    COPY . .
+    RUN yamllint .github/workflows/
