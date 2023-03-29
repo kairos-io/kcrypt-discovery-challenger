@@ -113,6 +113,10 @@ e2e-tests:
         RUN ./scripts/e2e-tests.sh
     END
 
+
+lint:
+    BUILD +yamllint
+
 yamllint:
     FROM cytopia/yamllint
     COPY . .
