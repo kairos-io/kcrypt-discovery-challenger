@@ -47,6 +47,12 @@ var _ = Describe("kcrypt encryption", func() {
 	})
 
 	AfterEach(func() {
+		if CurrentSpecReport().Failed() {
+			vm.GatherAllLogs(
+				[]string{"kcrypt", "immucore"},
+				[]string{"/run/immucore/immucore.log", "/run/immucore/initramfs_stage.log", "/run/immucore/rootfs_stage.log"},
+			)
+		}
 		err := vm.Destroy(func(vm VM) {
 			// Stop TPM emulator
 			tpmPID, err := os.ReadFile(path.Join(vm.StateDir, "tpm", "pid"))

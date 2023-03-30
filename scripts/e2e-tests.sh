@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -e
+set -ex
 
 # This scripts prepares a cluster where we install the kcrypt CRDs.
 # This is where sealed volumes are created.

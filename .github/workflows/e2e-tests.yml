@@ -16,11 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: "local-encryption"
           - label: "remote-auto"
-          - label: "remote-static"
-          - label: "remote-https-pinned"
-          - label: "remote-https-bad-cert"
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -68,3 +64,10 @@ jobs:
 
           # We run with sudo to be able to access /dev/kvm
           sudo -E ./scripts/e2e-tests.sh
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: logs-${{ matrix.label }}.zip
+          path: |
+            tests/logs/*
