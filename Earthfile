@@ -1,7 +1,8 @@
 VERSION 0.6
 ARG BASE_IMAGE=quay.io/kairos/core-ubuntu:latest
 ARG OSBUILDER_IMAGE=quay.io/kairos/osbuilder-tools
-ARG GO_VERSION=1.18
+# renovate: datasource=docker depName=golang
+ARG GO_VERSION=1.20
 ARG LUET_VERSION=0.33.0
 
 build-challenger:
@@ -111,3 +112,11 @@ e2e-tests:
     WITH DOCKER --allow-privileged
         RUN ./scripts/e2e-tests.sh
     END
+
+lint:
+    BUILD +yamllint
+
+yamllint:
+    FROM cytopia/yamllint
+    COPY . .
+    RUN yamllint .github/workflows/

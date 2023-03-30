@@ -1,13 +1,13 @@
 name: End to end tests
 on:
- push:
-   paths-ignore:
-     - 'README.md'
-   branches:
-     - main
- pull_request:
-   paths-ignore:
-     - 'README.md'
+  push:
+    paths-ignore:
+      - 'README.md'
+    branches:
+      - main
+  pull_request:
+    paths-ignore:
+      - 'README.md'
 
 jobs:
   e2e-tests:
@@ -15,21 +15,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-       include:
-         - label: "local-encryption"
-         - label: "remote-auto"
-         - label: "remote-static"
-         - label: "remote-https-pinned"
-         - label: "remote-https-bad-cert"
+        include:
+          - label: "local-encryption"
+          - label: "remote-auto"
+          - label: "remote-static"
+          - label: "remote-https-pinned"
+          - label: "remote-https-bad-cert"
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
       - name: Install Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
-            go-version: '^1.19'
+          go-version: ^1.20
       - name: Run tests
         env:
           LABEL: ${{ matrix.label }}
