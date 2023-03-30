@@ -3,7 +3,6 @@ ARG BASE_IMAGE=quay.io/kairos/core-ubuntu:latest
 ARG OSBUILDER_IMAGE=quay.io/kairos/osbuilder-tools
 # renovate: datasource=docker depName=golang
 ARG GO_VERSION=1.20
-ARG GOLINT_VERSION=1.52.2
 ARG LUET_VERSION=0.33.0
 
 build-challenger:
@@ -113,16 +112,6 @@ e2e-tests:
     WITH DOCKER --allow-privileged
         RUN ./scripts/e2e-tests.sh
     END
-
-golint:
-    ARG GO_VERSION
-    FROM golang:$GO_VERSION-alpine
-    RUN apk add build-base
-    ARG GOLINT_VERSION
-    RUN wget -O- -nv https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v$GOLINT_VERSION
-    WORKDIR /build
-    COPY . .
-    RUN golangci-lint run
 
 lint:
     BUILD +yamllint
