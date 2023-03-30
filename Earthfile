@@ -13,7 +13,7 @@ build-challenger:
     SAVE ARTIFACT /work/kcrypt-discovery-challenger AS LOCAL kcrypt-discovery-challenger
 
 image:
-    FROM github.com/Itxaka/kairos:kcrypt_rootfs+image
+    FROM github.com/Itxaka/kairos:drop_kcrypt_dracut+image
     ARG IMAGE
     RUN cat /etc/os-release
     COPY +build-challenger/kcrypt-discovery-challenger /system/discovery/kcrypt-discovery-challenger
