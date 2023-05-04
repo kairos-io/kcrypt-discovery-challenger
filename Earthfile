@@ -15,6 +15,14 @@ build-challenger:
 image:
     FROM $BASE_IMAGE
     ARG IMAGE
+    # TEST KCRYPT FROM BRANCH
+    ARG KCRYPT_DEV
+    ARG KCRYPT_DEV_BRANCH=main
+    IF [ "$KCRYPT_DEV" = "true" ]
+        RUN rm /usr/bin/kcrypt
+        COPY github.com/kairos-io/kcrypt:$KCRYPT_DEV_BRANCH+build-kcrypt/kcrypt /usr/bin/kcrypt
+    END
+   # END
     COPY +build-challenger/kcrypt-discovery-challenger /system/discovery/kcrypt-discovery-challenger
     SAVE IMAGE $IMAGE
 

@@ -51,7 +51,7 @@ jobs:
           sudo luet repo add -y kairos --url quay.io/kairos/packages --type docker
           LUET_NOLOCK=true sudo -E luet install -y container/kubectl utils/k3d utils/earthly
 
-          earthly -P +iso
+          earthly -P +iso --KCRYPT_DEV=true
           export ISO=$PWD/build/challenger.iso
 
           # Configure earthly to use the docker mirror in CI
