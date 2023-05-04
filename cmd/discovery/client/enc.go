@@ -20,7 +20,7 @@ func getPass(server, certificate string, partition *block.Partition) (string, bo
 	msg, err := tpm.Get(server,
 		tpm.WithCAs([]byte(certificate)),
 		tpm.AppendCustomCAToSystemCA,
-		tpm.WithAdditionalHeader("label", partition.Label),
+		tpm.WithAdditionalHeader("label", partition.FilesystemLabel),
 		tpm.WithAdditionalHeader("name", partition.Name),
 		tpm.WithAdditionalHeader("uuid", partition.UUID))
 	if err != nil {

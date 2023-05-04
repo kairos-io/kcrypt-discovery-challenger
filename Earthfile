@@ -10,7 +10,7 @@ build-challenger:
     COPY . /work
     WORKDIR /work
     RUN CGO_ENABLED=0 go build -o kcrypt-discovery-challenger ./cmd/discovery
-    SAVE ARTIFACT /work/kcrypt-discovery-challenger AS LOCAL kcrypt-discovery-challenger
+    SAVE ARTIFACT /work/kcrypt-discovery-challenger kcrypt-discovery-challenger AS LOCAL kcrypt-discovery-challenger
 
 image:
     FROM $BASE_IMAGE
