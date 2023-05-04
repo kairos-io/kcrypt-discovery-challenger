@@ -45,7 +45,7 @@ jobs:
                 insecure = true
           EOF
           
-          earthly -P +iso --KCRYPT_DEV=true
+          earthly -P +iso --KCRYPT_DEV=true --IMMUCORE_DEV=true
       - uses: actions/upload-artifact@v3
         with:
           name: challenger.iso.zip
