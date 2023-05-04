@@ -39,7 +39,7 @@ func unmarshalConfig() (Config, error) {
 	}
 
 	a, _ := c.String()
-	err = yaml.Unmarshal([]byte(a), result)
+	err = yaml.Unmarshal([]byte(a), &result)
 	if err != nil {
 		return result, err
 	}
