@@ -49,12 +49,6 @@ jobs:
           earthly -P +iso
           export ISO=$PWD/build/challenger.iso
 
-          go install -mod=mod github.com/onsi/ginkgo/v2/ginkgo
-          go get github.com/onsi/gomega/...
-          go get github.com/onsi/ginkgo/v2/ginkgo/internal@v2.7.1
-          go get github.com/onsi/ginkgo/v2/ginkgo/generators@v2.7.1
-          go get github.com/onsi/ginkgo/v2/ginkgo/labels@v2.7.1
-
           # Configure earthly to use the docker mirror in CI
           # https://docs.earthly.dev/ci-integration/pull-through-cache#configuring-earthly-to-use-the-cache
           cat << EOF > ~/.earthly/config.yml
