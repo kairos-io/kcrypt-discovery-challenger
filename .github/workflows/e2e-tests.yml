@@ -30,6 +30,11 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version: ^1.20
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKER_LOGIN }}
+          password: ${{ secrets.DOCKER_PASS }}
       - name: Run tests
         env:
           LABEL: ${{ matrix.label }}
