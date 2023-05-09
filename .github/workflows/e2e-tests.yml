@@ -11,7 +11,7 @@ on:
 
 jobs:
   build-iso:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -45,7 +45,7 @@ jobs:
                 insecure = true
           EOF
           
-          earthly -P +iso --KCRYPT_DEV=true --IMMUCORE_DEV=true
+          earthly -P +iso
       - uses: actions/upload-artifact@v3
         with:
           name: challenger.iso.zip
