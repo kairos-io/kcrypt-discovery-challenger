@@ -44,7 +44,7 @@ jobs:
               [registry."registry.docker-mirror.svc.cluster.local:5000"]
                 insecure = true
           EOF
-          
+
           earthly -P +iso
       - uses: actions/upload-artifact@v3
         with:
