@@ -29,7 +29,7 @@ func unmarshalConfig() (Config, error) {
 	var result Config
 
 	o := &collector.Options{NoLogs: true}
-	if err := o.Apply(collector.Directories(kconfig.ConfigScanDirs...)); err != nil {
+	if err := o.Apply(collector.Directories(append(kconfig.ConfigScanDirs, "/tmp/oem")...)); err != nil {
 		return result, err
 	}
 
