@@ -93,7 +93,6 @@ jobs:
       - name: Run tests
         env:
           LABEL: ${{ matrix.label }}
-          KVM: false
         run: |
           sudo apt update && \
           sudo apt install -y git qemu-system-x86 qemu-utils swtpm jq make glibc-tools \
