@@ -54,7 +54,7 @@ jobs:
   e2e-tests:
     needs:
       - build-iso
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -93,7 +93,7 @@ jobs:
       - name: Run tests
         env:
           LABEL: ${{ matrix.label }}
-          KVM: true
+          KVM: false
         run: |
           sudo apt update && \
           sudo apt install -y git qemu-system-x86 qemu-utils swtpm jq make glibc-tools \
@@ -102,7 +102,7 @@ jobs:
           export ISO=$PWD/$(ls *.iso)
 
           # We run with sudo to be able to access /dev/kvm
-          sudo -E ./scripts/e2e-tests.sh
+          ./scripts/e2e-tests.sh
       - uses: actions/upload-artifact@v3
         if: failure()
         with:
