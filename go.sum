@@ -505,6 +505,8 @@ github.com/kairos-io/kairos v1.24.3-56.0.20230329142538-b6ae4b58c07d h1:B01GinEZ
 github.com/kairos-io/kairos v1.24.3-56.0.20230329142538-b6ae4b58c07d/go.mod h1:2aYSSCHw8csfuqA5g6BpxBJ89kZt84G5okeuJj7PH+w=
 github.com/kairos-io/kairos-sdk v0.0.2-0.20230414094028-0c9d2bd9e6ae h1:u/1QiU5IAJNDPxsBWBQFKQxLJKcDog1aMrN0unaP18w=
 github.com/kairos-io/kairos-sdk v0.0.2-0.20230414094028-0c9d2bd9e6ae/go.mod h1:Wg/jfAQe8seka5VUXtcPvg+sA6GmQEy+DYlJmgKM8Zs=
+github.com/kairos-io/kairos/v2 v2.0.2-0.20230425093231-eff6f1daf1bd h1:kxqVTHxbpoHEQHAArQcMGqZgpCGpTQaR+s0eXAwxFR4=
+github.com/kairos-io/kairos/v2 v2.0.2-0.20230425093231-eff6f1daf1bd/go.mod h1:dzys8LY3s/J7HutuJ3Qoz2Cj1Pp668dXeTRPe00rpnk=
 github.com/kairos-io/kairos/v2 v2.0.3 h1:IOgK+bKklERQpU+ZQ1j/tX2qmKD4CFTQ0vzlMymQvno=
 github.com/kairos-io/kairos/v2 v2.0.3/go.mod h1:dzys8LY3s/J7HutuJ3Qoz2Cj1Pp668dXeTRPe00rpnk=
 github.com/kairos-io/kcrypt v0.5.3-0.20230504103829-18eab4843d04 h1:/4JelvhkUCuM2qkNvSG2DRzwIlzVm2/lUhX1UrkJalw=
