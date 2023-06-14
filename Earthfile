@@ -1,7 +1,8 @@
 VERSION 0.6
 ARG BASE_IMAGE=quay.io/kairos/core-ubuntu:latest
 ARG OSBUILDER_IMAGE=quay.io/kairos/osbuilder-tools
-ARG GO_VERSION=1.18
+# renovate: datasource=docker depName=golang
+ARG GO_VERSION=1.20
 ARG LUET_VERSION=0.33.0
 
 build-challenger:
@@ -9,7 +10,7 @@ build-challenger:
     COPY . /work
     WORKDIR /work
     RUN CGO_ENABLED=0 go build -o kcrypt-discovery-challenger ./cmd/discovery
-    SAVE ARTIFACT /work/kcrypt-discovery-challenger AS LOCAL kcrypt-discovery-challenger
+    SAVE ARTIFACT /work/kcrypt-discovery-challenger kcrypt-discovery-challenger AS LOCAL kcrypt-discovery-challenger
 
 image:
     FROM $BASE_IMAGE
@@ -49,14 +50,8 @@ test:
     COPY go.mod go.sum ./
     RUN go mod download && go mod verify
 
-    RUN go get github.com/onsi/gomega/...
-    RUN go get github.com/onsi/ginkgo/v2/ginkgo/internal@v2.1.4
-    RUN go get github.com/onsi/ginkgo/v2/ginkgo/generators@v2.1.4
-    RUN go get github.com/onsi/ginkgo/v2/ginkgo/labels@v2.1.4
-    RUN go install -mod=mod github.com/onsi/ginkgo/v2/ginkgo
-
     COPY . /work
-    RUN PATH=$PATH:$GOPATH/bin ginkgo run --covermode=atomic --coverprofile=coverage.out -p -r pkg/challenger cmd/discovery/client
+    RUN go run github.com/onsi/ginkgo/v2/ginkgo run --covermode=atomic --coverprofile=coverage.out -p -r pkg/challenger cmd/discovery/client
     SAVE ARTIFACT coverage.out AS LOCAL coverage.out
 
 # Generic targets
@@ -86,12 +81,6 @@ e2e-tests-image:
     COPY . /test
     WORKDIR /test
 
-    RUN go install -mod=mod github.com/onsi/ginkgo/v2/ginkgo
-    RUN go get github.com/onsi/gomega/...
-    RUN go get github.com/onsi/ginkgo/v2/ginkgo/internal@v2.7.1
-    RUN go get github.com/onsi/ginkgo/v2/ginkgo/generators@v2.7.1
-    RUN go get github.com/onsi/ginkgo/v2/ginkgo/labels@v2.7.1
-
     IF [ -e /test/build/kairos.iso ]
         ENV ISO=/test/build/kairos.iso
     ELSE
@@ -111,3 +100,11 @@ e2e-tests:
     WITH DOCKER --allow-privileged
         RUN ./scripts/e2e-tests.sh
     END
+
+lint:
+    BUILD +yamllint
+
+yamllint:
+    FROM cytopia/yamllint
+    COPY . .
+    RUN yamllint .github/workflows/

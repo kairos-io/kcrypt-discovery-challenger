@@ -1,8 +1,10 @@
 package client
 
 import (
-	"github.com/kairos-io/kairos/pkg/config"
+	"github.com/kairos-io/kairos/v2/pkg/config"
+	"github.com/kairos-io/kairos/v2/pkg/config/collector"
 	kconfig "github.com/kairos-io/kcrypt/pkg/config"
+	"gopkg.in/yaml.v3"
 )
 
 type Client struct {
@@ -26,12 +28,19 @@ type Config struct {
 func unmarshalConfig() (Config, error) {
 	var result Config
 
-	c, err := config.Scan(config.Directories(kconfig.ConfigScanDirs...), config.NoLogs)
+	o := &collector.Options{NoLogs: true}
+	if err := o.Apply(collector.Directories(append(kconfig.ConfigScanDirs, "/tmp/oem")...)); err != nil {
+		return result, err
+	}
+
+	c, err := collector.Scan(o, config.FilterKeys)
 	if err != nil {
 		return result, err
 	}
 
-	if err = c.Unmarshal(&result); err != nil {
+	a, _ := c.String()
+	err = yaml.Unmarshal([]byte(a), &result)
+	if err != nil {
 		return result, err
 	}
 

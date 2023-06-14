@@ -1,62 +1,41 @@
 name: End to end tests
 on:
- push:
-   paths-ignore:
-     - 'README.md'
-   branches:
-     - main
- pull_request:
-   paths-ignore:
-     - 'README.md'
+  push:
+    paths-ignore:
+      - 'README.md'
+    branches:
+      - main
+  pull_request:
+    paths-ignore:
+      - 'README.md'
 
 jobs:
-  e2e-tests:
-    runs-on: self-hosted
-    strategy:
-      fail-fast: false
-      matrix:
-       include:
-         - label: "local-encryption"
-         - label: "remote-auto"
-         - label: "remote-static"
-         - label: "remote-https-pinned"
-         - label: "remote-https-bad-cert"
+  build-iso:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
       - name: Install Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
-            go-version: '^1.19'
-      - name: Run tests
-        env:
-          LABEL: ${{ matrix.label }}
-          KVM: true
+          go-version: ^1.20
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKER_LOGIN }}
+          password: ${{ secrets.DOCKER_PASS }}
+      - name: Install earthly
+        uses: Luet-lab/luet-install-action@v1
+        with:
+          repository: quay.io/kairos/packages
+          packages: utils/earthly
+      - name: build iso
         run: |
-          sudo apt update && \
-          sudo apt install -y git qemu-system-x86 qemu-utils swtpm jq make glibc-tools \
-          openssl curl gettext ca-certificates curl gnupg lsb-release
-
-          curl -L  https://github.com/mudler/luet/releases/download/0.33.0/luet-0.33.0-linux-amd64 -o luet
-          chmod +x luet
-          sudo mv luet /usr/bin/luet
-          sudo mkdir -p /etc/luet/repos.conf.d/
-          sudo luet repo add -y kairos --url quay.io/kairos/packages --type docker
-          LUET_NOLOCK=true sudo -E luet install -y container/kubectl utils/k3d utils/earthly
-
-          earthly -P +iso
-          export ISO=$PWD/build/challenger.iso
-
-          go install -mod=mod github.com/onsi/ginkgo/v2/ginkgo
-          go get github.com/onsi/gomega/...
-          go get github.com/onsi/ginkgo/v2/ginkgo/internal@v2.7.1
-          go get github.com/onsi/ginkgo/v2/ginkgo/generators@v2.7.1
-          go get github.com/onsi/ginkgo/v2/ginkgo/labels@v2.7.1
-
           # Configure earthly to use the docker mirror in CI
           # https://docs.earthly.dev/ci-integration/pull-through-cache#configuring-earthly-to-use-the-cache
+          mkdir -p ~/.earthly/
           cat << EOF > ~/.earthly/config.yml
           global:
             buildkit_additional_config: |
@@ -66,5 +45,66 @@ jobs:
                 insecure = true
           EOF
 
+          earthly -P +iso
+      - uses: actions/upload-artifact@v3
+        with:
+          name: challenger.iso.zip
+          path: |
+            build/*.iso
+  e2e-tests:
+    needs:
+      - build-iso
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: "local-encryption"
+          - label: "remote-auto"
+          - label: "remote-static"
+          - label: "remote-https-pinned"
+          - label: "remote-https-bad-cert"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Install Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ^1.20
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKER_LOGIN }}
+          password: ${{ secrets.DOCKER_PASS }}
+      - name: Install deps
+        run: |
+          curl -L https://github.com/mudler/luet/releases/download/0.33.0/luet-0.33.0-linux-amd64 -o luet
+          chmod +x luet
+          sudo mv luet /usr/bin/luet
+          sudo mkdir -p /etc/luet/repos.conf.d/
+          sudo luet repo add -y kairos --url quay.io/kairos/packages --type docker
+          LUET_NOLOCK=true sudo -E luet install -y container/kubectl utils/k3d utils/earthly
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: challenger.iso.zip
+      - name: Run tests
+        env:
+          LABEL: ${{ matrix.label }}
+        run: |
+          sudo apt update && \
+          sudo apt install -y git qemu-system-x86 qemu-utils swtpm jq make glibc-tools \
+          openssl curl gettext ca-certificates curl gnupg lsb-release
+
+          export ISO=$PWD/$(ls *.iso)
+
           # We run with sudo to be able to access /dev/kvm
-          sudo -E ./scripts/e2e-tests.sh
+          ./scripts/e2e-tests.sh
+      - uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: ${{ matrix.label }}-test.logs.zip
+          path: tests/**/logs/*
+          if-no-files-found: warn
