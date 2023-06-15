@@ -7,7 +7,7 @@ require (
 	github.com/gorilla/websocket v1.5.0
 	github.com/jaypipes/ghw v0.10.0
 	github.com/kairos-io/kairos-sdk v0.0.8
-	github.com/kairos-io/kcrypt v0.5.3-0.20230504121015-f5dc23f5548a
+	github.com/kairos-io/kcrypt v0.7.0
 	github.com/kairos-io/tpm-helpers v0.0.0-20230119140150-3fa97128ef6b
 	github.com/mudler/go-pluggable v0.0.0-20230126220627-7710299a0ae5
 	github.com/mudler/go-processmanager v0.0.0-20220724164624-c45b5c61312d
