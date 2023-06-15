@@ -9,6 +9,10 @@ on:
     paths-ignore:
       - 'README.md'
 
+concurrency:
+  group: ci-e2e-${{ github.head_ref || github.ref }}-${{ github.repository }}
+  cancel-in-progress: true
+
 jobs:
   build-iso:
     runs-on: ubuntu-latest
