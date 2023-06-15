@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/google/uuid v1.3.0
 	github.com/gorilla/websocket v1.5.0
-	github.com/jaypipes/ghw v0.10.0
+	github.com/jaypipes/ghw v0.11.0
 	github.com/kairos-io/kairos-sdk v0.0.8
 	github.com/kairos-io/kcrypt v0.5.3-0.20230504121015-f5dc23f5548a
 	github.com/kairos-io/tpm-helpers v0.0.0-20230119140150-3fa97128ef6b
