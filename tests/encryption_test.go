@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -42,12 +43,18 @@ var _ = Describe("kcrypt encryption", func() {
 		err = vm.Scp(configFile.Name(), "config.yaml", "0744")
 		Expect(err).ToNot(HaveOccurred())
 
-		installationOutput, err = vm.Sudo("/bin/bash -c 'set -o pipefail && kairos-agent manual-install --device auto config.yaml 2>&1 | tee manual-install.txt'")
+		installationOutput, err = vm.Sudo("/bin/bash -c 'set -o pipefail && kairos-agent --debug manual-install --device auto config.yaml 2>&1 | tee manual-install.txt'")
 		Expect(err).ToNot(HaveOccurred(), installationOutput)
 	})
 
 	AfterEach(func() {
-		vm.GatherLog("/run/immucore/immucore.log")
+		if CurrentSpecReport().Failed() {
+			vm.GatherLog("/run/immucore/immucore.log")
+			serial, _ := os.ReadFile(filepath.Join(vm.StateDir, "serial.log"))
+			_ = os.MkdirAll("logs", os.ModePerm|os.ModeDir)
+			_ = os.WriteFile(filepath.Join("logs", "serial.log"), serial, os.ModePerm)
+			fmt.Println(string(serial))
+		}
 		err := vm.Destroy(func(vm VM) {
 			// Stop TPM emulator
 			tpmPID, err := os.ReadFile(path.Join(vm.StateDir, "tpm", "pid"))
