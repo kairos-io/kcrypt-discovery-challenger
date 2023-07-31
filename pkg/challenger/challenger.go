@@ -141,12 +141,17 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 			uuid := r.Header.Get("uuid")
 			v := &payload.Data{}
 
+			fmt.Printf("Header label = %+v\n", label)
+			fmt.Printf("Header name = %+v\n", name)
+			fmt.Printf("Header uuid = %+v\n", uuid)
+
 			volumeList := &keyserverv1alpha1.SealedVolumeList{}
 			if err := reconciler.List(ctx, volumeList, &client.ListOptions{Namespace: namespace}); err != nil {
 				fmt.Println("Failed listing volumes")
 				fmt.Println(err)
 				continue
 			}
+			fmt.Printf("volumeList = %+v\n", volumeList)
 
 			sealedVolumeData := findVolumeFor(PassphraseRequestData{
 				TPMHash:    hashEncoded,
@@ -220,6 +225,10 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 			name := r.Header.Get("name")
 			uuid := r.Header.Get("uuid")
 
+			fmt.Printf("Header label = %+v\n", label)
+			fmt.Printf("Header name = %+v\n", name)
+			fmt.Printf("Header uuid = %+v\n", uuid)
+
 			if err := tpm.AuthRequest(r, conn); err != nil {
 				fmt.Println("error validating challenge", err.Error())
 				return
@@ -238,6 +247,7 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 				UUID:       uuid,
 			}, volumeList)
 
+			fmt.Printf("sealedVolumeData = %+v\n", sealedVolumeData)
 			if sealedVolumeData == nil {
 				writer, _ := conn.NextWriter(websocket.BinaryMessage)
 				errorMessage(writer, fmt.Sprintf("Invalid hash: %s", hashEncoded))
@@ -247,6 +257,7 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 
 			writer, _ := conn.NextWriter(websocket.BinaryMessage)
 			if !sealedVolumeData.Quarantined {
+				fmt.Println("not quarantined")
 				secretName, secretPath := sealedVolumeData.DefaultSecret()
 
 				// 1. The admin sets a specific cleartext password from Kube manager
@@ -307,7 +318,10 @@ func Start(ctx context.Context, kclient *kubernetes.Clientset, reconciler *contr
 func findVolumeFor(requestData PassphraseRequestData, volumeList *keyserverv1alpha1.SealedVolumeList) *SealedVolumeData {
 	for _, v := range volumeList.Items {
 		if requestData.TPMHash == v.Spec.TPMHash {
+			fmt.Printf("found a matching volume for TPM hash = %+v\n", v.Spec.TPMHash)
 			for _, p := range v.Spec.Partitions {
+				fmt.Printf("requestData = %+v\n", requestData)
+				fmt.Printf("p = %+v\n", p)
 				deviceNameMatches := requestData.DeviceName != "" && p.DeviceName == requestData.DeviceName
 				uuidMatches := requestData.UUID != "" && p.UUID == requestData.UUID
 				labelMatches := requestData.Label != "" && p.Label == requestData.Label
@@ -319,7 +333,13 @@ func findVolumeFor(requestData PassphraseRequestData, volumeList *keyserverv1alp
 				if p.Secret != nil && p.Secret.Path != "" {
 					secretPath = p.Secret.Path
 				}
+				fmt.Printf("secretName = %+v\n", secretName)
+				fmt.Printf("secretPath = %+v\n", secretPath)
 				if labelMatches || uuidMatches || deviceNameMatches {
+					fmt.Printf("labelMatches = %+v\n", labelMatches)
+					fmt.Printf("uuidMatches = %+v\n", uuidMatches)
+					fmt.Printf("deviceNameMatches = %+v\n", deviceNameMatches)
+					fmt.Println("Matched a sealed volume")
 					return &SealedVolumeData{
 						Quarantined:    v.Spec.Quarantined,
 						SecretName:     secretName,
