@@ -58,7 +58,7 @@ jobs:
   e2e-tests:
     needs:
       - build-iso
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     strategy:
       fail-fast: false
       matrix:
@@ -97,6 +97,7 @@ jobs:
       - name: Run tests
         env:
           LABEL: ${{ matrix.label }}
+          KVM: true
         run: |
           sudo apt update && \
           sudo apt install -y git qemu-system-x86 qemu-utils swtpm jq make glibc-tools \
