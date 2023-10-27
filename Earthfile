@@ -22,20 +22,13 @@ image-rootfs:
   FROM +image
   SAVE ARTIFACT --keep-own /. rootfs
 
-grub-files:
-    FROM alpine
-    RUN apk add wget
-    RUN wget https://raw.githubusercontent.com/c3os-io/c3os/master/overlay/files-iso/boot/grub2/grub.cfg -O grub.cfg
-    SAVE ARTIFACT --keep-own grub.cfg grub.cfg
-
 iso:
     ARG OSBUILDER_IMAGE
     ARG ISO_NAME=challenger
     FROM $OSBUILDER_IMAGE
     WORKDIR /build
-    COPY --keep-own +grub-files/grub.cfg /build/files-iso/boot/grub2/grub.cfg
     COPY --keep-own +image-rootfs/rootfs /build/rootfs
-    RUN /entrypoint.sh --name $ISO_NAME --debug build-iso --squash-no-compression --date=false --local --overlay-iso /build/files-iso --output /build/ dir:/build/rootfs
+    RUN /entrypoint.sh --name $ISO_NAME --debug build-iso --squash-no-compression --date=false --output /build/ dir:/build/rootfs
     SAVE ARTIFACT /build/$ISO_NAME.iso kairos.iso AS LOCAL build/$ISO_NAME.iso
     SAVE ARTIFACT /build/$ISO_NAME.iso.sha256 kairos.iso.sha256 AS LOCAL build/$ISO_NAME.iso.sha256
 

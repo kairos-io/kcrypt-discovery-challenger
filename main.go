@@ -23,6 +23,7 @@ import (
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
+
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
@@ -120,7 +121,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	go challenger.Start(context.Background(), clientset, reconciler, namespace, challengerAddr)
+	serverLog := ctrl.Log.WithName("server")
+
+	go challenger.Start(context.Background(), serverLog, clientset, reconciler, namespace, challengerAddr)
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
