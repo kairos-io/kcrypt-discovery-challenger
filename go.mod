@@ -2,6 +2,9 @@ module github.com/kairos-io/kairos-challenger
 
 go 1.20
 
+// WIP branch: 2069-mdns-kms
+replace github.com/kairos-io/tpm-helpers => /home/dimitris/workspace/kairos/tpm-helpers
+
 require (
 	github.com/go-logr/logr v1.2.4
 	github.com/google/uuid v1.3.0
@@ -85,6 +88,7 @@ require (
 	github.com/gookit/color v1.5.3 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
+	github.com/hashicorp/mdns v1.0.5 // indirect
 	github.com/huandu/xstrings v1.3.3 // indirect
 	github.com/imdario/mergo v0.3.15 // indirect
 	github.com/ipfs/go-log v1.0.5 // indirect
@@ -100,6 +104,7 @@ require (
 	github.com/mattn/go-isatty v0.0.19 // indirect
 	github.com/mattn/go-runewidth v0.0.14 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
+	github.com/miekg/dns v1.1.41 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
