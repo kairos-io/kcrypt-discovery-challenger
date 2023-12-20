@@ -2,9 +2,6 @@ module github.com/kairos-io/kairos-challenger
 
 go 1.20
 
-// WIP branch: 2069-mdns-kms
-replace github.com/kairos-io/tpm-helpers => /home/dimitris/workspace/kairos/tpm-helpers
-
 require (
 	github.com/go-logr/logr v1.2.4
 	github.com/google/uuid v1.3.0
@@ -12,7 +9,7 @@ require (
 	github.com/jaypipes/ghw v0.11.0
 	github.com/kairos-io/kairos-sdk v0.0.15
 	github.com/kairos-io/kcrypt v0.7.0
-	github.com/kairos-io/tpm-helpers v0.0.0-20230119140150-3fa97128ef6b
+	github.com/kairos-io/tpm-helpers v0.0.0-20231220125202-70a0b64e5111
 	github.com/mudler/go-pluggable v0.0.0-20230126220627-7710299a0ae5
 	github.com/mudler/go-processmanager v0.0.0-20220724164624-c45b5c61312d
 	github.com/mudler/yip v1.3.0
