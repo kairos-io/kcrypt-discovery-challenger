@@ -89,14 +89,8 @@ kcrypt:
     challenger_server: "http://doesnt-matter-the-name.local"
 ```
 
-- Test it out before installation (you need to put the config in /oem to be discovered):
-
-```
-echo '{ "data": "{ \"label\": \"COS_PERSISTENT\" }"}' | sudo /system/discovery/kcrypt-discovery-challenger "discovery.password"
-```
-
 - Install:
 
 ```
-kairos-agent manual-install --device auto /oem/config.yaml
+kairos-agent manual-install --device auto config.yaml
 ```
