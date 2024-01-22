@@ -17,19 +17,23 @@ k3d cluster create kcrypt -p '30000:30000@server:0'
 ```
 helm repo add kairos https://kairos-io.github.io/helm-charts
 helm install kairos-crd kairos/kairos-crds
-helm install kairos-challenger kairos/kairos-challenger
 ```
 
-- Edit the challenger service `kairos-challenger-escrow-service` and change it to NodePort (or do it through the helm chart when installing)
+Create the following 'kcrypt-challenger-values.yaml` file:
 
-```
-  ports:
-  - name: wss
+
+```yaml
+service:
+  challenger:
+    type: "NodePort"
     port: 8082
-    protocol: TCP
-    targetPort: 8082
     nodePort: 30000
-  type: NodePort
+```
+
+and deploy the challenger server with it:
+
+```bash
+helm install -f kcrypt-challenger-values.yaml kairos-challenger kairos/kairos-challenger
 ```
 
 - Add the sealedvolume and secret for the tpm chip:
@@ -52,7 +56,7 @@ metadata:
 spec:
   TPMHash: "5640e37f4016da16b841a93880dcc44886904392fa3c86681087b77db5afedbe"
   partitions:
-    - label: "persistent"
+    - label: COS_PERSISTENT
       secret:
         name: example-host-tpm-secret
         path: pass
@@ -62,7 +66,7 @@ spec:
 - Start the [simple-mdns-server](https://github.com/kairos-io/simple-mdns-server)
 
 ```
-go run . --port 30000 --interfaceName enp121s0 --serviceType _kcrypt._tcp
+go run . --port 30000 --interfaceName enp121s0 --serviceType _kcrypt._tcp --hostName mychallenger.local
 ```
 
 
@@ -86,7 +90,7 @@ install:
 # Kcrypt configuration block
 kcrypt:
   challenger:
-    challenger_server: "http://doesnt-matter-the-name.local"
+    challenger_server: "http://mychallenger.local"
 ```
 
 - Install:
