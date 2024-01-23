@@ -1,5 +1,8 @@
 VERSION 0.6
-ARG BASE_IMAGE=quay.io/kairos/core-ubuntu:latest
+
+# TODO: Find a way to automatically bump this
+ARG BASE_IMAGE=quay.io/kairos/ubuntu:23.10-core-amd64-generic-v2.5.0
+
 ARG OSBUILDER_IMAGE=quay.io/kairos/osbuilder-tools
 # renovate: datasource=docker depName=golang
 ARG GO_VERSION=1.20

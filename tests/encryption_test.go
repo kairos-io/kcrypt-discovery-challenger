@@ -363,29 +363,9 @@ func getChallengerServerCert() string {
 }
 
 func createConfigWithCert(server, cert string) client.Config {
-	return client.Config{
-		Kcrypt: struct {
-			Challenger struct {
-				Server      string "yaml:\"challenger_server,omitempty\""
-				NVIndex     string "yaml:\"nv_index,omitempty\""
-				CIndex      string "yaml:\"c_index,omitempty\""
-				TPMDevice   string "yaml:\"tpm_device,omitempty\""
-				Certificate string "yaml:\"certificate,omitempty\""
-			}
-		}{
-			Challenger: struct {
-				Server      string "yaml:\"challenger_server,omitempty\""
-				NVIndex     string "yaml:\"nv_index,omitempty\""
-				CIndex      string "yaml:\"c_index,omitempty\""
-				TPMDevice   string "yaml:\"tpm_device,omitempty\""
-				Certificate string "yaml:\"certificate,omitempty\""
-			}{
-				Server:      server,
-				NVIndex:     "",
-				CIndex:      "",
-				TPMDevice:   "",
-				Certificate: cert,
-			},
-		},
-	}
+	c := client.Config{}
+	c.Kcrypt.Challenger.Server = server
+	c.Kcrypt.Challenger.Certificate = cert
+
+	return c
 }
