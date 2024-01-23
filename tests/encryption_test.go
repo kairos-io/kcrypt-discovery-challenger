@@ -63,6 +63,16 @@ var _ = Describe("kcrypt encryption", func() {
 		Expect(err).ToNot(HaveOccurred())
 	})
 
+	When("discovering KMS with mdns", func() {
+		// TODO: Run the simple-mdns-server (https://github.com/kairos-io/simple-mdns-server/)
+		// inside the to-be-installed VM, advertising the KMS as running on 10.0.2.2.
+		// This is a "hack" to avoid setting up 2 VMs just to have the mdns and the
+		// mdns client on the same network. Since our mdns server is just a go binary
+		// and since it can advertise any IP address we want (no necessarily its own),
+		// we will run it inside the VM. It should be enough for the the kcrypt-challenger
+		// cli to get an mdns response.
+	})
+
 	// https://kairos.io/docs/advanced/partition_encryption/#offline-mode
 	When("doing local encryption", Label("local-encryption"), func() {
 		BeforeEach(func() {
