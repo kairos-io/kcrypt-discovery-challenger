@@ -24,8 +24,11 @@ var mdnsVM VM
 var _ = Describe("kcrypt encryption", func() {
 	var config string
 	var vmOpts VMOptions
+	var expectedInstallationSuccess bool
 
 	BeforeEach(func() {
+		expectedInstallationSuccess = true
+
 		vmOpts = DefaultVMOptions()
 		RegisterFailHandler(printInstallationOutput)
 		_, vm = startVM(vmOpts)
@@ -46,7 +49,9 @@ var _ = Describe("kcrypt encryption", func() {
 		Expect(err).ToNot(HaveOccurred())
 
 		installationOutput, err = vm.Sudo("/bin/bash -c 'set -o pipefail && kairos-agent manual-install --device auto config.yaml 2>&1 | tee manual-install.txt'")
-		Expect(err).ToNot(HaveOccurred(), installationOutput)
+		if expectedInstallationSuccess {
+			Expect(err).ToNot(HaveOccurred(), installationOutput)
+		}
 	})
 
 	AfterEach(func() {
@@ -329,6 +334,8 @@ install:
 
 		When("the no certificate is set in the configuration", Label("remote-https-bad-cert"), func() {
 			BeforeEach(func() {
+				expectedInstallationSuccess = false
+
 				config = fmt.Sprintf(`#cloud-config
 
 hostname: metal-{{ trunc 4 .MachineID }}
