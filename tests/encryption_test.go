@@ -359,7 +359,7 @@ kcrypt:
 			It("fails to talk to the server", func() {
 				out, err := vm.Sudo("cat manual-install.txt")
 				Expect(err).ToNot(HaveOccurred(), out)
-				Expect(out).To(MatchRegexp("could not encrypt partition.*x509: certificate signed by unknown authority"))
+				Expect(out).To(MatchRegexp("failed to verify certificate: x509: certificate signed by unknown authority"))
 			})
 		})
 	})
