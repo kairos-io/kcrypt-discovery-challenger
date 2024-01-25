@@ -37,6 +37,8 @@ type VMOptions struct {
 }
 
 func DefaultVMOptions() VMOptions {
+	var err error
+
 	memory := os.Getenv("MEMORY")
 	if memory == "" {
 		memory = "2096"
@@ -45,8 +47,12 @@ func DefaultVMOptions() VMOptions {
 	if cpus == "" {
 		cpus = "2"
 	}
-	runSpicy, err := strconv.ParseBool(os.Getenv("MACHINE_SPICY"))
-	Expect(err).ToNot(HaveOccurred())
+
+	runSpicy := false
+	if s := os.Getenv("MACHINE_SPICY"); s != "" {
+		runSpicy, err = strconv.ParseBool(os.Getenv("MACHINE_SPICY"))
+		Expect(err).ToNot(HaveOccurred())
+	}
 
 	useKVM := false
 	if envKVM := os.Getenv("KVM"); envKVM != "" {
