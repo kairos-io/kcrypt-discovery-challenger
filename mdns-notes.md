@@ -90,6 +90,7 @@ install:
 # Kcrypt configuration block
 kcrypt:
   challenger:
+    mdns: true
     challenger_server: "http://mychallenger.local"
 ```
 

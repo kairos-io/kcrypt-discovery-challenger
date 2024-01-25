@@ -11,6 +11,7 @@ spec:
   - hosts:
     - 10.0.2.2.challenger.sslip.io
     - ${CLUSTER_IP}.challenger.sslip.io
+    - discoverable-kms.local
     secretName: kms-tls
   rules:
     - host: 10.0.2.2.challenger.sslip.io
@@ -24,6 +25,16 @@ spec:
                 port:
                   number: 8082
     - host: ${CLUSTER_IP}.challenger.sslip.io
+      http:
+        paths:
+          - pathType: Prefix
+            path: "/"
+            backend:
+              service:
+                name: kcrypt-controller-kcrypt-escrow-server
+                port:
+                  number: 8082
+    - host: discoverable-kms.local
       http:
         paths:
           - pathType: Prefix

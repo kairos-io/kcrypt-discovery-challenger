@@ -19,13 +19,16 @@ import (
 
 var installationOutput string
 var vm VM
+var mdnsVM VM
 
 var _ = Describe("kcrypt encryption", func() {
 	var config string
+	var vmOpts VMOptions
 
 	BeforeEach(func() {
+		vmOpts = DefaultVMOptions()
 		RegisterFailHandler(printInstallationOutput)
-		_, vm = startVM()
+		_, vm = startVM(vmOpts)
 		fmt.Printf("\nvm.StateDir = %+v\n", vm.StateDir)
 
 		vm.EventuallyConnects(1200)
@@ -63,14 +66,59 @@ var _ = Describe("kcrypt encryption", func() {
 		Expect(err).ToNot(HaveOccurred())
 	})
 
-	When("discovering KMS with mdns", func() {
-		// TODO: Run the simple-mdns-server (https://github.com/kairos-io/simple-mdns-server/)
-		// inside the to-be-installed VM, advertising the KMS as running on 10.0.2.2.
-		// This is a "hack" to avoid setting up 2 VMs just to have the mdns and the
-		// mdns client on the same network. Since our mdns server is just a go binary
-		// and since it can advertise any IP address we want (no necessarily its own),
-		// we will run it inside the VM. It should be enough for the the kcrypt-challenger
-		// cli to get an mdns response.
+	When("discovering KMS with mdns", Label("discoverable-kms"), func() {
+		var tpmHash string
+		var mdnsHostname string
+
+		BeforeEach(func() {
+			By("creating the secret in kubernetes")
+			tpmHash = createTPMPassphraseSecret(vm)
+
+			mdnsHostname = "discoverable-kms.local"
+
+			By("deploying simple-mdns-server vm")
+			mdnsVM = deploySimpleMDNSServer(mdnsHostname)
+
+			config = fmt.Sprintf(`#cloud-config
+
+hostname: metal-{{ trunc 4 .MachineID }}
+users:
+- name: kairos
+  passwd: kairos
+
+install:
+  encrypted_partitions:
+  - COS_PERSISTENT
+  grub_options:
+    extra_cmdline: "rd.neednet=1"
+  reboot: false # we will reboot manually
+
+kcrypt:
+  challenger:
+	  mdns: true
+    challenger_server: "http://%[1]s"
+`, mdnsHostname)
+		})
+
+		AfterEach(func() {
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", tpmHash)
+			out, err := cmd.CombinedOutput()
+			Expect(err).ToNot(HaveOccurred(), out)
+
+			err = mdnsVM.Destroy(func(vm VM) {})
+			Expect(err).ToNot(HaveOccurred())
+		})
+
+		It("discovers the KMS using mdns", func() {
+			By("rebooting")
+			vm.Reboot()
+			By("checking that we can connect after installation")
+			vm.EventuallyConnects(1200)
+			By("checking if we got an encrypted partition")
+			out, err := vm.Sudo("blkid")
+			Expect(err).ToNot(HaveOccurred(), out)
+			Expect(out).To(MatchRegexp("TYPE=\"crypto_LUKS\" PARTLABEL=\"persistent\""), out)
+		})
 	})
 
 	// https://kairos.io/docs/advanced/partition_encryption/#offline-mode
@@ -102,25 +150,9 @@ users:
 	//https://kairos.io/docs/advanced/partition_encryption/#online-mode
 	When("using a remote key management server (automated passphrase generation)", Label("remote-auto"), func() {
 		var tpmHash string
-		var err error
 
 		BeforeEach(func() {
-			tpmHash, err = vm.Sudo("/system/discovery/kcrypt-discovery-challenger")
-			Expect(err).ToNot(HaveOccurred(), tpmHash)
-
-			kubectlApplyYaml(fmt.Sprintf(`---
-apiVersion: keyserver.kairos.io/v1alpha1
-kind: SealedVolume
-metadata:
-  name: "%[1]s"
-  namespace: default
-spec:
-  TPMHash: "%[1]s"
-  partitions:
-    - label: COS_PERSISTENT
-  quarantined: false
-`, strings.TrimSpace(tpmHash)))
-
+			tpmHash = createTPMPassphraseSecret(vm)
 			config = fmt.Sprintf(`#cloud-config
 
 hostname: metal-{{ trunc 4 .MachineID }}
@@ -223,10 +255,6 @@ install:
 kcrypt:
   challenger:
     challenger_server: "http://%s"
-    nv_index: ""
-    c_index: ""
-    tpm_device: ""
-
 `, os.Getenv("KMS_ADDRESS"))
 		})
 
@@ -253,24 +281,15 @@ kcrypt:
 
 	When("the key management server is listening on https", func() {
 		var tpmHash string
-		var err error
 
 		BeforeEach(func() {
-			tpmHash, err = vm.Sudo("/system/discovery/kcrypt-discovery-challenger")
-			Expect(err).ToNot(HaveOccurred(), tpmHash)
+			tpmHash = createTPMPassphraseSecret(vm)
+		})
 
-			kubectlApplyYaml(fmt.Sprintf(`---
-apiVersion: keyserver.kairos.io/v1alpha1
-kind: SealedVolume
-metadata:
-  name: "%[1]s"
-  namespace: default
-spec:
-  TPMHash: "%[1]s"
-  partitions:
-    - label: COS_PERSISTENT
-  quarantined: false
-`, strings.TrimSpace(tpmHash)))
+		AfterEach(func() {
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", tpmHash)
+			out, err := cmd.CombinedOutput()
+			Expect(err).ToNot(HaveOccurred(), out)
 		})
 
 		When("the certificate is pinned on the configuration", Label("remote-https-pinned"), func() {
@@ -327,9 +346,6 @@ install:
 kcrypt:
   challenger:
     challenger_server: "https://%s"
-    nv_index: ""
-    c_index: ""
-    tpm_device: ""
 `, os.Getenv("KMS_ADDRESS"))
 			})
 
@@ -378,4 +394,52 @@ func createConfigWithCert(server, cert string) client.Config {
 	c.Kcrypt.Challenger.Certificate = cert
 
 	return c
+}
+
+func createTPMPassphraseSecret(vm VM) string {
+	tpmHash, err := vm.Sudo("/system/discovery/kcrypt-discovery-challenger")
+	Expect(err).ToNot(HaveOccurred(), tpmHash)
+
+	kubectlApplyYaml(fmt.Sprintf(`---
+apiVersion: keyserver.kairos.io/v1alpha1
+kind: SealedVolume
+metadata:
+  name: "%[1]s"
+  namespace: default
+spec:
+  TPMHash: "%[1]s"
+  partitions:
+    - label: COS_PERSISTENT
+  quarantined: false
+`, strings.TrimSpace(tpmHash)))
+
+	return tpmHash
+}
+
+// We run the simple-mdns-server (https://github.com/kairos-io/simple-mdns-server/)
+// inside a VM next to the one we test. The server advertises the KMS as running on 10.0.2.2
+// (the host machine). This is a "hack" and is needed because of how the default
+// networking in qemu works. We need to be within the same network and that
+// network is only available withing another VM.
+// https://wiki.qemu.org/Documentation/Networking
+func deploySimpleMDNSServer(hostname string) VM {
+	opts := DefaultVMOptions()
+	opts.Memory = "2000"
+	opts.CPUS = "1"
+	opts.EmulateTPM = false
+	_, vm := startVM(opts)
+	vm.EventuallyConnects(1200)
+
+	out, err := vm.Sudo(`curl -s https://api.github.com/repos/kairos-io/simple-mdns-server/releases/latest | jq -r .assets[].browser_download_url | grep $(uname -m) | xargs curl -L -o sms.tar.gz`)
+	Expect(err).ToNot(HaveOccurred(), string(out))
+
+	out, err = vm.Sudo("tar xvf sms.tar.gz")
+	Expect(err).ToNot(HaveOccurred(), string(out))
+
+	// Start the simple-mdns-server in the background
+	out, err = vm.Sudo(fmt.Sprintf(
+		"/bin/bash -c './simple-mdns-server --port 80 --address 10.0.2.2 --serviceType _kcrypt._tcp --hostName %s &'", hostname))
+	Expect(err).ToNot(HaveOccurred(), string(out))
+
+	return vm
 }
