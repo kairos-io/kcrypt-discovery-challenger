@@ -16,13 +16,19 @@ import (
 
 const DefaultNVIndex = "0x1500000"
 
-func getPass(server, certificate string, partition *block.Partition) (string, bool, error) {
-	msg, err := tpm.Get(server,
+func getPass(server string, headers map[string]string, certificate string, partition *block.Partition) (string, bool, error) {
+	opts := []tpm.Option{
 		tpm.WithCAs([]byte(certificate)),
 		tpm.AppendCustomCAToSystemCA,
 		tpm.WithAdditionalHeader("label", partition.FilesystemLabel),
 		tpm.WithAdditionalHeader("name", partition.Name),
-		tpm.WithAdditionalHeader("uuid", partition.UUID))
+		tpm.WithAdditionalHeader("uuid", partition.UUID),
+	}
+	for k, v := range headers {
+		opts = append(opts, tpm.WithAdditionalHeader(k, v))
+	}
+
+	msg, err := tpm.Get(server, opts...)
 	if err != nil {
 		return "", false, err
 	}

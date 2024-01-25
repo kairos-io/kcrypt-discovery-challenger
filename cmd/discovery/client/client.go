@@ -16,6 +16,9 @@ import (
 	"github.com/mudler/yip/pkg/utils"
 )
 
+// Because of how go-pluggable works, we can't just print to stdout
+const LOGFILE = "/tmp/kcrypt-challenger-client.log"
+
 var errPartNotFound error = fmt.Errorf("pass for partition not found")
 var errBadCertificate error = fmt.Errorf("unknown certificate")
 
@@ -30,6 +33,10 @@ func NewClient() (*Client, error) {
 
 // ❯ echo '{ "data": "{ \\"label\\": \\"LABEL\\" }"}' | sudo -E WSS_SERVER="http://localhost:8082/challenge" ./challenger "discovery.password"
 func (c *Client) Start() error {
+	if err := os.RemoveAll(LOGFILE); err != nil { // Start fresh
+		return fmt.Errorf("removing the logfile: %w", err)
+	}
+
 	factory := pluggable.NewPluginFactory()
 
 	// Input: bus.EventInstallPayload
@@ -59,7 +66,7 @@ func (c *Client) Start() error {
 	return factory.Run(pluggable.EventType(os.Args[1]), os.Stdin, os.Stdout)
 }
 
-func (c *Client) generatePass(postEndpoint string, p *block.Partition) error {
+func (c *Client) generatePass(postEndpoint string, headers map[string]string, p *block.Partition) error {
 
 	rand := utils.RandomString(32)
 	pass, err := tpm.EncryptBlob([]byte(rand))
@@ -75,6 +82,10 @@ func (c *Client) generatePass(postEndpoint string, p *block.Partition) error {
 		tpm.WithAdditionalHeader("name", p.Name),
 		tpm.WithAdditionalHeader("uuid", p.UUID),
 	}
+	for k, v := range headers {
+		opts = append(opts, tpm.WithAdditionalHeader(k, v))
+	}
+
 	conn, err := tpm.Connection(postEndpoint, opts...)
 	if err != nil {
 		return err
@@ -84,20 +95,27 @@ func (c *Client) generatePass(postEndpoint string, p *block.Partition) error {
 }
 
 func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err error) {
-	// IF we don't have any server configured, just do local
-	if c.Config.Kcrypt.Challenger.Server == "" {
+	additionalHeaders := map[string]string{}
+	serverURL := c.Config.Kcrypt.Challenger.Server
+
+	// If we don't have any server configured, just do local
+	if serverURL == "" {
 		return localPass(c.Config)
 	}
 
-	challengeEndpoint := fmt.Sprintf("%s/getPass", c.Config.Kcrypt.Challenger.Server)
-	postEndpoint := fmt.Sprintf("%s/postPass", c.Config.Kcrypt.Challenger.Server)
+	if c.Config.Kcrypt.Challenger.MDNS {
+		serverURL, additionalHeaders, err = queryMDNS(serverURL)
+	}
+
+	getEndpoint := fmt.Sprintf("%s/getPass", serverURL)
+	postEndpoint := fmt.Sprintf("%s/postPass", serverURL)
 
 	for tries := 0; tries < attempts; tries++ {
 		var generated bool
-		pass, generated, err = getPass(challengeEndpoint, c.Config.Kcrypt.Challenger.Certificate, p)
+		pass, generated, err = getPass(getEndpoint, additionalHeaders, c.Config.Kcrypt.Challenger.Certificate, p)
 		if err == errPartNotFound {
 			// IF server doesn't have a pass for us, then we generate one and we set it
-			err = c.generatePass(postEndpoint, p)
+			err = c.generatePass(postEndpoint, additionalHeaders, p)
 			if err != nil {
 				return
 			}
@@ -118,7 +136,7 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 			return
 		}
 
-		fmt.Printf("Failed with error: %s . Will retry.\n", err.Error())
+		logToFile("Failed with error: %s . Will retry.\n", err.Error())
 		time.Sleep(1 * time.Second) // network errors? retry
 	}
 
@@ -144,4 +162,15 @@ func (c *Client) decryptPassphrase(pass string) (string, error) {
 	passBytes, err := tpm.DecryptBlob(blob, opts...)
 
 	return string(passBytes), err
+}
+
+func logToFile(format string, a ...any) {
+	s := fmt.Sprintf(format, a...)
+	file, err := os.OpenFile(LOGFILE, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	file.WriteString(s)
 }

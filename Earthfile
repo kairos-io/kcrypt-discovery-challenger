@@ -1,5 +1,9 @@
 VERSION 0.6
-ARG BASE_IMAGE=quay.io/kairos/core-ubuntu:latest
+
+# renovate: datasource=github-releases depName=kairos-io/kairos
+ARG KAIROS_VERSION="v2.5.0"
+ARG BASE_IMAGE=quay.io/kairos/ubuntu:23.10-core-amd64-generic-$KAIROS_VERSION
+
 ARG OSBUILDER_IMAGE=quay.io/kairos/osbuilder-tools
 # renovate: datasource=docker depName=golang
 ARG GO_VERSION=1.20

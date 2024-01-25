@@ -25,6 +25,53 @@ func TestE2e(t *testing.T) {
 	RunSpecs(t, "kcrypt-challenger e2e test Suite")
 }
 
+type VMOptions struct {
+	ISO        string
+	User       string
+	Password   string
+	Memory     string
+	CPUS       string
+	RunSpicy   bool
+	UseKVM     bool
+	EmulateTPM bool
+}
+
+func DefaultVMOptions() VMOptions {
+	var err error
+
+	memory := os.Getenv("MEMORY")
+	if memory == "" {
+		memory = "2096"
+	}
+	cpus := os.Getenv("CPUS")
+	if cpus == "" {
+		cpus = "2"
+	}
+
+	runSpicy := false
+	if s := os.Getenv("MACHINE_SPICY"); s != "" {
+		runSpicy, err = strconv.ParseBool(os.Getenv("MACHINE_SPICY"))
+		Expect(err).ToNot(HaveOccurred())
+	}
+
+	useKVM := false
+	if envKVM := os.Getenv("KVM"); envKVM != "" {
+		useKVM, err = strconv.ParseBool(os.Getenv("KVM"))
+		Expect(err).ToNot(HaveOccurred())
+	}
+
+	return VMOptions{
+		ISO:        os.Getenv("ISO"),
+		User:       user(),
+		Password:   pass(),
+		Memory:     memory,
+		CPUS:       cpus,
+		RunSpicy:   runSpicy,
+		UseKVM:     useKVM,
+		EmulateTPM: true,
+	}
+}
+
 func user() string {
 	user := os.Getenv("SSH_USER")
 	if user == "" {
@@ -42,8 +89,8 @@ func pass() string {
 	return pass
 }
 
-func startVM() (context.Context, VM) {
-	if os.Getenv("ISO") == "" {
+func startVM(vmOpts VMOptions) (context.Context, VM) {
+	if vmOpts.ISO == "" {
 		fmt.Println("ISO missing")
 		os.Exit(1)
 	}
@@ -53,29 +100,22 @@ func startVM() (context.Context, VM) {
 	stateDir, err := os.MkdirTemp("", "")
 	Expect(err).ToNot(HaveOccurred())
 
-	emulateTPM(stateDir)
+	if vmOpts.EmulateTPM {
+		emulateTPM(stateDir)
+	}
 
 	sshPort, err := getFreePort()
 	Expect(err).ToNot(HaveOccurred())
 
-	memory := os.Getenv("MEMORY")
-	if memory == "" {
-		memory = "2096"
-	}
-	cpus := os.Getenv("CPUS")
-	if cpus == "" {
-		cpus = "2"
-	}
-
 	opts := []types.MachineOption{
 		types.QEMUEngine,
-		types.WithISO(os.Getenv("ISO")),
-		types.WithMemory(memory),
-		types.WithCPU(cpus),
+		types.WithISO(vmOpts.ISO),
+		types.WithMemory(vmOpts.Memory),
+		types.WithCPU(vmOpts.CPUS),
 		types.WithSSHPort(strconv.Itoa(sshPort)),
 		types.WithID(vmName),
-		types.WithSSHUser(user()),
-		types.WithSSHPass(pass()),
+		types.WithSSHUser(vmOpts.User),
+		types.WithSSHPass(vmOpts.Password),
 		types.OnFailure(func(p *process.Process) {
 			defer GinkgoRecover()
 
@@ -109,9 +149,12 @@ func startVM() (context.Context, VM) {
 		types.WithStateDir(stateDir),
 		// Serial output to file: https://superuser.com/a/1412150
 		func(m *types.MachineConfig) error {
+			if vmOpts.EmulateTPM {
+				m.Args = append(m.Args,
+					"-chardev", fmt.Sprintf("socket,id=chrtpm,path=%s/swtpm-sock", path.Join(stateDir, "tpm")),
+					"-tpmdev", "emulator,id=tpm0,chardev=chrtpm", "-device", "tpm-tis,tpmdev=tpm0")
+			}
 			m.Args = append(m.Args,
-				"-chardev", fmt.Sprintf("socket,id=chrtpm,path=%s/swtpm-sock", path.Join(stateDir, "tpm")),
-				"-tpmdev", "emulator,id=tpm0,chardev=chrtpm", "-device", "tpm-tis,tpmdev=tpm0",
 				"-chardev", fmt.Sprintf("stdio,mux=on,id=char0,logfile=%s,signal=off", path.Join(stateDir, "serial.log")),
 				"-serial", "chardev:char0",
 				"-mon", "chardev=char0",
@@ -123,14 +166,14 @@ func startVM() (context.Context, VM) {
 	// Set this to true to debug.
 	// You can connect to it with "spicy" or other tool.
 	var spicePort int
-	if os.Getenv("MACHINE_SPICY") != "" {
+	if vmOpts.RunSpicy {
 		spicePort, err = getFreePort()
 		Expect(err).ToNot(HaveOccurred())
 		fmt.Printf("Spice port = %d\n", spicePort)
 		opts = append(opts, types.WithDisplay(fmt.Sprintf("-spice port=%d,addr=127.0.0.1,disable-ticketing", spicePort)))
 	}
 
-	if os.Getenv("KVM") != "" {
+	if vmOpts.UseKVM {
 		opts = append(opts, func(m *types.MachineConfig) error {
 			m.Args = append(m.Args,
 				"-enable-kvm",
@@ -147,7 +190,7 @@ func startVM() (context.Context, VM) {
 	ctx, err := vm.Start(context.Background())
 	Expect(err).ToNot(HaveOccurred())
 
-	if os.Getenv("MACHINE_SPICY") != "" {
+	if vmOpts.RunSpicy {
 		cmd := exec.Command("spicy",
 			"-h", "127.0.0.1",
 			"-p", strconv.Itoa(spicePort))

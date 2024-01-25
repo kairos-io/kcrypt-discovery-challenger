@@ -68,6 +68,7 @@ jobs:
           - label: "remote-static"
           - label: "remote-https-pinned"
           - label: "remote-https-bad-cert"
+          - label: "discoverable-kms"
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
