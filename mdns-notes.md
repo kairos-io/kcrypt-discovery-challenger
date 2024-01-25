@@ -84,6 +84,8 @@ users:
     passwd: kairos
 
 install:
+  grub_options:
+    extra_cmdline: "rd.neednet=1"
   encrypted_partitions:
   - COS_PERSISTENT
 
