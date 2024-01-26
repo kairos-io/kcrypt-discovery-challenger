@@ -8,7 +8,7 @@ require (
 	github.com/gorilla/websocket v1.5.1
 	github.com/hashicorp/mdns v1.0.5
 	github.com/jaypipes/ghw v0.11.0
-	github.com/kairos-io/kairos-sdk v0.0.15
+	github.com/kairos-io/kairos-sdk v0.0.23
 	github.com/kairos-io/kcrypt v0.7.0
 	github.com/kairos-io/tpm-helpers v0.0.0-20240123063624-f7a3fcc66199
 	github.com/mudler/go-pluggable v0.0.0-20230126220627-7710299a0ae5

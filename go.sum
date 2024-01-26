@@ -415,6 +415,8 @@ github.com/juju/ratelimit v1.0.1/go.mod h1:qapgC/Gy+xNh9UxzV13HGGl/6UXNN+ct+vwSg
 github.com/julienschmidt/httprouter v1.2.0/go.mod h1:SYymIcj16QtmaHHD7aYtjjsJG7VTCxuUUipMqKk8s4w=
 github.com/kairos-io/kairos-sdk v0.0.15 h1:1hcnRfKlBzDWcZ8z7UrUqJ2v6GafCHZknPqm90iTZdU=
 github.com/kairos-io/kairos-sdk v0.0.15/go.mod h1:Ew3NKFuXByu3Y3yGu8Q92M3oMqsXrg2VilouubdhYqA=
+github.com/kairos-io/kairos-sdk v0.0.23 h1:2osQaqIPDB0Tj0a0v8NGOPrgQWve3D6r8nHRf7NKe3I=
+github.com/kairos-io/kairos-sdk v0.0.23/go.mod h1:17dpFG2d3Q/TcT86DlLK5nNXEjlSrkYl7bsvO2cpYGE=
 github.com/kairos-io/kcrypt v0.7.0 h1:ESmCBIFbBBv7mJf0/f6ugqwSvz63M5oP9sUIdHiDlLc=
 github.com/kairos-io/kcrypt v0.7.0/go.mod h1:a9eI+vPVIQHPRtqEV/O/yIfDOdMWd9epVrq1p94gccM=
 github.com/kairos-io/tpm-helpers v0.0.0-20240123063624-f7a3fcc66199 h1:eXiZNiQfZDelYfTF733IxDOKGAKJqn0fF0kFY10QreU=
