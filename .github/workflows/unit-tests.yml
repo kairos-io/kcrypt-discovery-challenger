@@ -1,4 +1,3 @@
----
 name: Unit tests
 on:
   push:
@@ -15,7 +14,7 @@ jobs:
     strategy:
       matrix:
         # Match this version to the maintained FIPS version in packages at https://github.com/kairos-io/packages/blob/main/packages/toolchain-go/collection.yaml#L63
-        go-version: [ "1.19.10-bookworm", "1.20-bookworm", "1.21-bookworm" ]
+        go-version: ["1.19.10-bookworm", "1.20-bookworm", "1.21-bookworm"]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
