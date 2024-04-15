@@ -1,24 +1,37 @@
----
 name: Unit tests
 on:
   push:
     branches:
       - master
   pull_request:
-
-
+env:
+  FORCE_COLOR: 1
 concurrency:
   group: ci-unit-${{ github.head_ref || github.ref }}-${{ github.repository }}
   cancel-in-progress: true
-
 jobs:
   unit-tests:
+    strategy:
+      matrix:
+        # Match this version to the maintained FIPS version in packages at https://github.com/kairos-io/packages/blob/main/packages/toolchain-go/collection.yaml#L63
+        go-version: ["1.19.10-bookworm", "1.20-bookworm", "1.21-bookworm"]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
+      - name: Install earthly
+        uses: Luet-lab/luet-install-action@v1
+        with:
+          repository: quay.io/kairos/packages
+          packages: utils/earthly
       - name: Run tests
         run: |
-          ./earthly.sh +test
+          earthly +test --GO_VERSION=${{ matrix.go-version }}
+      - name: Codecov
+        uses: codecov/codecov-action@v4
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          file: ./coverage.out
