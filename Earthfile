@@ -6,7 +6,7 @@ ARG BASE_IMAGE=quay.io/kairos/ubuntu:23.10-core-amd64-generic-$KAIROS_VERSION
 
 ARG OSBUILDER_IMAGE=quay.io/kairos/osbuilder-tools
 # renovate: datasource=docker depName=golang
-ARG GO_VERSION=1.20
+ARG GO_VERSION=1.20-bookworm
 ARG LUET_VERSION=0.33.0
 
 build-challenger:
@@ -36,18 +36,22 @@ iso:
     SAVE ARTIFACT /build/$ISO_NAME.iso kairos.iso AS LOCAL build/$ISO_NAME.iso
     SAVE ARTIFACT /build/$ISO_NAME.iso.sha256 kairos.iso.sha256 AS LOCAL build/$ISO_NAME.iso.sha256
 
-test:
+go-deps:
     ARG GO_VERSION
     FROM golang:$GO_VERSION
-    ENV CGO_ENABLED=0
+    WORKDIR /build
+    COPY go.mod go.sum ./
+    RUN go mod download
+    RUN go mod verify
+    SAVE ARTIFACT go.mod AS LOCAL go.mod
+    SAVE ARTIFACT go.sum AS LOCAL go.sum
 
+test:
+    FROM +go-deps
+    ENV CGO_ENABLED=0
     WORKDIR /work
 
-    # Cache layer for modules
-    COPY go.mod go.sum ./
-    RUN go mod download && go mod verify
-
-    COPY . /work
+    COPY . .
     RUN go run github.com/onsi/ginkgo/v2/ginkgo run --covermode=atomic --coverprofile=coverage.out -p -r pkg/challenger cmd/discovery/client
     SAVE ARTIFACT coverage.out AS LOCAL coverage.out
 
