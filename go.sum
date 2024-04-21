@@ -644,6 +644,8 @@ github.com/soheilhy/cmux v0.1.4/go.mod h1:IM3LyeVVIOuxMH7sFAkER9+bJ4dT7Ms6E4xg4k
 github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72/go.mod h1:JwIasOWyU6f++ZhiEuf87xNszmSA2myDM2Kzu9HwQUA=
 github.com/spectrocloud/peg v0.0.0-20230407121159-2e15270c4a46 h1:q2T2RnISqPdZWvUpBQw0n7QWtF4cNo5RpCDTZmV732M=
 github.com/spectrocloud/peg v0.0.0-20230407121159-2e15270c4a46/go.mod h1:L2fIdtZqbQEagjOOXwkwH3t7MjJUd7fbt52cLSQGDBg=
+github.com/spectrocloud/peg v0.0.0-20240405075800-c5da7125e30f h1:0HvH/0MSCifBcS9YzZ+XJ9PeAdlrAvi3E1iipIZmqas=
+github.com/spectrocloud/peg v0.0.0-20240405075800-c5da7125e30f/go.mod h1:L2fIdtZqbQEagjOOXwkwH3t7MjJUd7fbt52cLSQGDBg=
 github.com/spf13/afero v1.1.2/go.mod h1:j4pytiNVoe2o6bmDsKpLACNPDBIoEAkihy7loJ1B0CQ=
 github.com/spf13/cast v1.3.0/go.mod h1:Qx5cxh0v+4UWYiBimWS+eyWzqEqokIECu5etghLkUJE=
 github.com/spf13/cast v1.3.1/go.mod h1:Qx5cxh0v+4UWYiBimWS+eyWzqEqokIECu5etghLkUJE=
