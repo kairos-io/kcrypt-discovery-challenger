@@ -11,7 +11,7 @@ replace (
 require (
 	github.com/go-logr/logr v1.4.2
 	github.com/google/uuid v1.3.0
-	github.com/gorilla/websocket v1.5.1
+	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/mdns v1.0.5
 	github.com/jaypipes/ghw v0.12.0
 	github.com/kairos-io/kairos-sdk v0.1.0
