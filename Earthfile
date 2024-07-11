@@ -6,11 +6,11 @@ ARG BASE_IMAGE=quay.io/kairos/ubuntu:23.10-core-amd64-generic-$KAIROS_VERSION
 
 ARG OSBUILDER_IMAGE=quay.io/kairos/osbuilder-tools
 # renovate: datasource=docker depName=golang
-ARG GO_VERSION=1.20-bookworm
+ARG GO_VERSION=1.22-bookworm
 ARG LUET_VERSION=0.33.0
 
 build-challenger:
-    FROM golang:alpine
+    FROM +go-deps
     COPY . /work
     WORKDIR /work
     RUN CGO_ENABLED=0 go build -o kcrypt-discovery-challenger ./cmd/discovery
@@ -23,8 +23,8 @@ image:
     SAVE IMAGE $IMAGE
 
 image-rootfs:
-  FROM +image
-  SAVE ARTIFACT --keep-own /. rootfs
+    FROM +image
+    SAVE ARTIFACT --keep-own /. rootfs
 
 iso:
     ARG OSBUILDER_IMAGE
@@ -58,17 +58,17 @@ test:
 # Generic targets
 # usage e.g. ./earthly.sh +datasource-iso --CLOUD_CONFIG=tests/assets/qrcode.yaml
 datasource-iso:
-  ARG OSBUILDER_IMAGE
-  ARG CLOUD_CONFIG
-  FROM $OSBUILDER_IMAGE
-  RUN zypper in -y mkisofs
-  WORKDIR /build
-  RUN touch meta-data
+    ARG OSBUILDER_IMAGE
+    ARG CLOUD_CONFIG
+    FROM $OSBUILDER_IMAGE
+    RUN zypper in -y mkisofs
+    WORKDIR /build
+    RUN touch meta-data
 
-  COPY ${CLOUD_CONFIG} user-data
-  RUN cat user-data
-  RUN mkisofs -output ci.iso -volid cidata -joliet -rock user-data meta-data
-  SAVE ARTIFACT /build/ci.iso iso.iso AS LOCAL build/datasource.iso
+    COPY ${CLOUD_CONFIG} user-data
+    RUN cat user-data
+    RUN mkisofs -output ci.iso -volid cidata -joliet -rock user-data meta-data
+    SAVE ARTIFACT /build/ci.iso iso.iso AS LOCAL build/datasource.iso
 
 luet:
     FROM quay.io/luet/base:$LUET_VERSION

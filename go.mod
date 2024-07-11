@@ -1,12 +1,6 @@
 module github.com/kairos-io/kairos-challenger
 
-go 1.19
-
-// This versions require go1.20 and we need to support 1.19 for fips
-replace (
-	github.com/onsi/ginkgo/v2 v2.17.1 => github.com/onsi/ginkgo/v2 v2.12.1
-	github.com/onsi/gomega v1.32.0 => github.com/onsi/gomega v1.28.0
-)
+go 1.22
 
 require (
 	github.com/go-logr/logr v1.4.2
