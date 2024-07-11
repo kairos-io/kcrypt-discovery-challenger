@@ -76,7 +76,7 @@ luet:
 
 e2e-tests-image:
     FROM opensuse/tumbleweed
-    RUN zypper in -y go git qemu-x86 qemu-arm qemu-tools swtpm docker jq docker-compose make glibc libopenssl-devel curl gettext-runtime
+    RUN zypper in -y go1.22 git qemu-x86 qemu-arm qemu-tools swtpm docker jq docker-compose make glibc libopenssl-devel curl gettext-runtime awk envsubst
     ENV GOPATH="/go"
 
     COPY . /test
@@ -94,11 +94,15 @@ e2e-tests-image:
     RUN luet repo add -y kairos --url quay.io/kairos/packages --type docker
     RUN LUET_NOLOCK=true luet install -y container/kubectl utils/k3d
 
+controller-latest:
+    FROM DOCKERFILE .
+    SAVE IMAGE controller:latest
+
 e2e-tests:
     FROM +e2e-tests-image
     ARG LABEL
-
-    WITH DOCKER --allow-privileged
+    RUN make test # This also generates the latest controllers automatically, we do that before building the docker image with them
+    WITH DOCKER --allow-privileged --load controller:latest=+controller-latest
         RUN ./scripts/e2e-tests.sh
     END
 

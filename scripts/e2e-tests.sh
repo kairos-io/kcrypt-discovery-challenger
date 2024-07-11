@@ -34,10 +34,8 @@ trap cleanup EXIT
 k3d cluster create "$CLUSTER_NAME" --k3s-arg "--cluster-cidr=10.49.0.1/16@server:0" --k3s-arg "--service-cidr=10.48.0.1/16@server:0" -p '80:80@server:0' -p '443:443@server:0' --image "$K3S_IMAGE"
 k3d kubeconfig get "$CLUSTER_NAME" > "$KUBECONFIG"
 
-# Build the docker image
-IMG=controller:latest make docker-build
-
-# Import the image to the cluster
+# Import the controller image that we built at the start into to the cluster
+# this image has to exists and be available in the local docker
 k3d image import -c "$CLUSTER_NAME" controller:latest
 
 # Install cert manager
