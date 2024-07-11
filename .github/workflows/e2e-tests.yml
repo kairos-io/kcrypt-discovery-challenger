@@ -103,9 +103,12 @@ jobs:
           openssl curl gettext ca-certificates curl gnupg lsb-release
 
           export ISO=$PWD/$(ls *.iso)
-
+          # update controllers
+          make test
+          # Generate controller image
+          make docker-build
           # We run with sudo to be able to access /dev/kvm
-          ./scripts/e2e-tests.sh
+          sudo -E ./scripts/e2e-tests.sh
       - uses: actions/upload-artifact@v3
         if: failure()
         with:
