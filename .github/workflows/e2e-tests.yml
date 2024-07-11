@@ -74,6 +74,8 @@ jobs:
           fetch-depth: 0
       - name: Install Go
         uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
       - name: Login to DockerHub
         uses: docker/login-action@v1
         with:
