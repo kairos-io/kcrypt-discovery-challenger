@@ -1,17 +1,11 @@
 module github.com/kairos-io/kairos-challenger
 
-go 1.19
-
-// This versions require go1.20 and we need to support 1.19 for fips
-replace (
-	github.com/onsi/ginkgo/v2 v2.17.1 => github.com/onsi/ginkgo/v2 v2.12.1
-	github.com/onsi/gomega v1.32.0 => github.com/onsi/gomega v1.28.0
-)
+go 1.22
 
 require (
-	github.com/go-logr/logr v1.4.1
-	github.com/google/uuid v1.3.0
-	github.com/gorilla/websocket v1.5.1
+	github.com/go-logr/logr v1.4.2
+	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/mdns v1.0.5
 	github.com/jaypipes/ghw v0.12.0
 	github.com/kairos-io/kairos-sdk v0.1.0
@@ -23,7 +17,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.17.1
 	github.com/onsi/gomega v1.32.0
 	github.com/pkg/errors v0.9.1
-	github.com/spectrocloud/peg v0.0.0-20230407121159-2e15270c4a46
+	github.com/spectrocloud/peg v0.0.0-20240405075800-c5da7125e30f
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.27.2
 	k8s.io/apimachinery v0.27.2

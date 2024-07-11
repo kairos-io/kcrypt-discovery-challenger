@@ -24,3 +24,4 @@ testbin/*
 *~
 
 /helm-chart
+build/
