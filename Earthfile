@@ -76,7 +76,7 @@ luet:
 
 e2e-tests-image:
     FROM opensuse/tumbleweed
-    RUN zypper in -y go1.22 git qemu-x86 qemu-arm qemu-tools swtpm docker jq docker-compose make glibc libopenssl-devel curl gettext-runtime awk envsubst
+    RUN zypper in -y go1.23 git qemu-x86 qemu-arm qemu-tools swtpm docker jq docker-compose make glibc libopenssl-devel curl gettext-runtime awk envsubst
     ENV GOPATH="/go"
 
     COPY . /test
