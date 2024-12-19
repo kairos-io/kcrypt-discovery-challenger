@@ -9,7 +9,7 @@ require (
 	github.com/hashicorp/mdns v1.0.5
 	github.com/jaypipes/ghw v0.13.0
 	github.com/kairos-io/kairos-sdk v0.6.1
-	github.com/kairos-io/kcrypt v0.12.2
+	github.com/kairos-io/kcrypt v0.13.0
 	github.com/kairos-io/tpm-helpers v0.0.0-20240123063624-f7a3fcc66199
 	github.com/mudler/go-pluggable v0.0.0-20230126220627-7710299a0ae5
 	github.com/mudler/go-processmanager v0.0.0-20240820160718-8b802d3ecf82
