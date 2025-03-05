@@ -2,7 +2,7 @@ module github.com/kairos-io/kairos-challenger
 
 go 1.23.6
 
-toolchain go1.24.0
+toolchain go1.24.1
 
 require (
 	github.com/go-logr/logr v1.4.2
