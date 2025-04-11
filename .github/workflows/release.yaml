@@ -1,7 +1,6 @@
 name: goreleaser
 
 on:
-  pull_request:
   push:
     tags:
       - 'v*'
@@ -23,6 +22,6 @@ jobs:
         uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
-          args: --snapshot --clean
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
