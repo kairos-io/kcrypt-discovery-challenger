@@ -1,5 +1,6 @@
 # Make sure to check the documentation at http://goreleaser.com
 version: 2
+project_name: kcrypt-discovery-challenger
 builds:
   - env:
       - CGO_ENABLED=0
@@ -11,8 +12,9 @@ builds:
       - arm64
     binary: '{{ .ProjectName }}'
     id: default
+    main: ./cmd/discovery/main.go
   - env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
       - GOEXPERIMENT=boringcrypto
       - CGO_LDFLAGS="-ldl"
     goos:
@@ -21,8 +23,9 @@ builds:
       - amd64
     binary: '{{ .ProjectName }}'
     id: fips-amd64
+    main: ./cmd/discovery/main.go
   - env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
       - GOEXPERIMENT=boringcrypto
       - CC=aarch64-linux-gnu-gcc
       - CGO_LDFLAGS="-ldl"
@@ -32,6 +35,7 @@ builds:
       - arm64
     binary: '{{ .ProjectName }}'
     id: fips-arm64
+    main: ./cmd/discovery/main.go
 source:
   enabled: true
   name_template: '{{ .ProjectName }}-{{ .Tag }}-source'
