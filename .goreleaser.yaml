@@ -24,6 +24,9 @@ builds:
     binary: '{{ .ProjectName }}'
     id: fips-amd64
     main: ./cmd/discovery/main.go
+    hooks:
+      post:
+        - bash -c 'set -e; go version {{.Path}} | grep boringcrypto || (echo "boringcrypto not found" && exit 1)'
   - env:
       - CGO_ENABLED=0
       - GOEXPERIMENT=boringcrypto
@@ -36,6 +39,9 @@ builds:
     binary: '{{ .ProjectName }}'
     id: fips-arm64
     main: ./cmd/discovery/main.go
+    hooks:
+      post:
+      - bash -c 'set -e; go version {{.Path}} | grep boringcrypto || (echo "boringcrypto not found" && exit 1)'
 source:
   enabled: true
   name_template: '{{ .ProjectName }}-{{ .Tag }}-source'
