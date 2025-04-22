@@ -47,7 +47,7 @@ func getPass(server string, headers map[string]string, certificate string, parti
 		if strings.Contains(result.Error, "x509: certificate signed by unknown authority") {
 			return "", false, errBadCertificate
 		}
-		return "", false, fmt.Errorf(result.Error)
+		return "", false, errors.New(result.Error)
 	}
 
 	return "", false, errPartNotFound
