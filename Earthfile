@@ -6,7 +6,7 @@ ARG BASE_IMAGE=quay.io/kairos/ubuntu:23.10-core-amd64-generic-$KAIROS_VERSION
 
 ARG OSBUILDER_IMAGE=quay.io/kairos/osbuilder-tools
 # renovate: datasource=docker depName=golang
-ARG GO_VERSION=1.23-bookworm
+ARG GO_VERSION=1.24-bookworm
 ARG LUET_VERSION=0.33.0
 
 build-challenger:
