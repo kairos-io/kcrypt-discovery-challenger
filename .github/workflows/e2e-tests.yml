@@ -29,10 +29,9 @@ jobs:
           username: ${{ secrets.DOCKER_LOGIN }}
           password: ${{ secrets.DOCKER_PASS }}
       - name: Install earthly
-        uses: Luet-lab/luet-install-action@v1
+        uses: earthly/actions-setup@v1
         with:
-          repository: quay.io/kairos/packages
-          packages: utils/earthly
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: build iso
         run: |
           # Configure earthly to use the docker mirror in CI
