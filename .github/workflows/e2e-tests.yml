@@ -23,11 +23,6 @@ jobs:
           fetch-depth: 0
       - name: Install Go
         uses: actions/setup-go@v5
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_LOGIN }}
-          password: ${{ secrets.DOCKER_PASS }}
       - name: Install earthly
         uses: earthly/actions-setup@v1
         with:
@@ -75,11 +70,10 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
+      - name: Install earthly
+        uses: earthly/actions-setup@v1
         with:
-          username: ${{ secrets.DOCKER_LOGIN }}
-          password: ${{ secrets.DOCKER_PASS }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Install deps
         run: |
           curl -L https://github.com/mudler/luet/releases/download/0.33.0/luet-0.33.0-linux-amd64 -o luet
@@ -87,7 +81,7 @@ jobs:
           sudo mv luet /usr/bin/luet
           sudo mkdir -p /etc/luet/repos.conf.d/
           sudo luet repo add -y kairos --url quay.io/kairos/packages --type docker
-          LUET_NOLOCK=true sudo -E luet install -y container/kubectl utils/k3d utils/earthly
+          LUET_NOLOCK=true sudo -E luet install -y container/kubectl utils/k3d
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
