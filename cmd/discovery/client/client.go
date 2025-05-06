@@ -10,7 +10,7 @@ import (
 	"github.com/jaypipes/ghw/pkg/block"
 	"github.com/kairos-io/kairos-challenger/pkg/constants"
 	"github.com/kairos-io/kairos-challenger/pkg/payload"
-	"github.com/kairos-io/kcrypt/pkg/bus"
+	"github.com/kairos-io/kairos-sdk/kcrypt/bus"
 	"github.com/kairos-io/tpm-helpers"
 	"github.com/mudler/go-pluggable"
 	"github.com/mudler/yip/pkg/utils"

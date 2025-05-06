@@ -2,9 +2,15 @@ package client
 
 import (
 	"github.com/kairos-io/kairos-sdk/collector"
-	kconfig "github.com/kairos-io/kcrypt/pkg/config"
 	"gopkg.in/yaml.v3"
 )
+
+// There are the directories under which we expect to find kairos configuration.
+// When we are booted from an iso (during installation), configuration is expected
+// under `/oem`. When we are booting an installed system (in initramfs phase),
+// the path is `/sysroot/oem`.
+// When we run the challenger in hooks, we may have the config under /tmp/oem
+var confScanDirs = []string{"/oem", "/sysroot/oem", "/tmp/oem"}
 
 type Client struct {
 	Config Config
@@ -27,7 +33,7 @@ func unmarshalConfig() (Config, error) {
 	var result Config
 
 	o := &collector.Options{NoLogs: true, MergeBootCMDLine: false}
-	if err := o.Apply(collector.Directories(append(kconfig.ConfigScanDirs, "/tmp/oem")...)); err != nil {
+	if err := o.Apply(collector.Directories(confScanDirs...)); err != nil {
 		return result, err
 	}
 
