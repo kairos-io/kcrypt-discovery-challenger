@@ -83,7 +83,7 @@ jobs:
           sudo luet repo add -y kairos --url quay.io/kairos/packages --type docker
           LUET_NOLOCK=true sudo -E luet install -y container/kubectl utils/k3d
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: challenger.iso.zip
       - name: Run tests
