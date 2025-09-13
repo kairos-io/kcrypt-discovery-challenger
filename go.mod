@@ -7,7 +7,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/mdns v1.0.6
-	github.com/jaypipes/ghw v0.17.0
+	github.com/jaypipes/ghw v0.19.1
 	github.com/kairos-io/kairos-sdk v0.10.1
 	github.com/kairos-io/tpm-helpers v0.0.0-20240123063624-f7a3fcc66199
 	github.com/mudler/go-pluggable v0.0.0-20230126220627-7710299a0ae5
@@ -97,6 +97,7 @@ require (
 	github.com/ipfs/go-log/v2 v2.5.1 // indirect
 	github.com/itchyny/gojq v0.12.17 // indirect
 	github.com/itchyny/timefmt-go v0.1.6 // indirect
+	github.com/jaypipes/pcidb v1.1.1 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -171,7 +172,7 @@ require (
 	google.golang.org/protobuf v1.36.7 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	howett.net/plist v1.0.0 // indirect
+	howett.net/plist v1.0.2-0.20250314012144-ee69052608d9 // indirect
 	k8s.io/apiextensions-apiserver v0.27.2 // indirect
 	k8s.io/component-base v0.27.2 // indirect
 	k8s.io/klog/v2 v2.90.1 // indirect
