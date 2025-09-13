@@ -12,7 +12,7 @@ require (
 	github.com/kairos-io/tpm-helpers v0.0.0-20240123063624-f7a3fcc66199
 	github.com/mudler/go-pluggable v0.0.0-20230126220627-7710299a0ae5
 	github.com/mudler/go-processmanager v0.0.0-20240820160718-8b802d3ecf82
-	github.com/mudler/yip v1.16.3
+	github.com/mudler/yip v1.18.0
 	github.com/onsi/ginkgo/v2 v2.25.1
 	github.com/onsi/gomega v1.38.2
 	github.com/pkg/errors v0.9.1
