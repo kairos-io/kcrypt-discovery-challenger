@@ -2,6 +2,8 @@ module github.com/kairos-io/kairos-challenger
 
 go 1.25
 
+replace github.com/kairos-io/tpm-helpers => /home/dimitris/workspace/kairos/tpm-helpers
+
 require (
 	github.com/go-logr/logr v1.4.3
 	github.com/google/uuid v1.6.0
@@ -34,7 +36,6 @@ require (
 	github.com/Masterminds/sprig/v3 v3.3.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/Microsoft/hcsshim v0.12.9 // indirect
-	github.com/StackExchange/wmi v1.2.1 // indirect
 	github.com/avast/retry-go v3.0.0+incompatible // indirect
 	github.com/aybabtme/rgbterm v0.0.0-20170906152045-cc83f3b3ce59 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
