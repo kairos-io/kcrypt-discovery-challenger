@@ -1,57 +1,74 @@
 package client
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
-	"github.com/jaypipes/ghw/pkg/block"
-	"github.com/kairos-io/kairos-challenger/pkg/constants"
-	"github.com/kairos-io/kairos-challenger/pkg/payload"
+	"github.com/gorilla/websocket"
+	"github.com/kairos-io/kairos-challenger/pkg/attestation"
 	"github.com/kairos-io/kairos-sdk/kcrypt/bus"
+	"github.com/kairos-io/kairos-sdk/state"
+	"github.com/kairos-io/kairos-sdk/types"
 	"github.com/kairos-io/tpm-helpers"
 	"github.com/mudler/go-pluggable"
-	"github.com/mudler/yip/pkg/utils"
 )
 
-// Because of how go-pluggable works, we can't just print to stdout
-const LOGFILE = "/tmp/kcrypt-challenger-client.log"
+const (
+	NetworkRetryDelay = 1 * time.Second // delay for network/server issues
+)
 
-var errPartNotFound error = fmt.Errorf("pass for partition not found")
-var errBadCertificate error = fmt.Errorf("unknown certificate")
-
-func NewClient() (*Client, error) {
-	conf, err := unmarshalConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	return &Client{Config: conf}, nil
+func NewClientWithLogger(logger types.KairosLogger) (*Client, error) {
+	// No config loading here - config is passed via the DiscoveryPasswordPayload JSON
+	conf := newEmptyConfig()
+	return &Client{Config: conf, Logger: logger}, nil
 }
 
-// ❯ echo '{ "data": "{ \\"label\\": \\"LABEL\\" }"}' | sudo -E WSS_SERVER="http://localhost:8082/challenge" ./challenger "discovery.password"
-func (c *Client) Start() error {
-	if err := os.RemoveAll(LOGFILE); err != nil { // Start fresh
-		return fmt.Errorf("removing the logfile: %w", err)
-	}
-
+func (c *Client) Start(eventType pluggable.EventType) error {
 	factory := pluggable.NewPluginFactory()
 
-	// Input: bus.EventInstallPayload
-	// Expected output: map[string]string{}
 	factory.Add(bus.EventDiscoveryPassword, func(e *pluggable.Event) pluggable.EventResponse {
-
-		b := &block.Partition{}
-		err := json.Unmarshal([]byte(e.Data), b)
+		payload := &bus.DiscoveryPasswordPayload{}
+		err := json.Unmarshal([]byte(e.Data), payload)
 		if err != nil {
 			return pluggable.EventResponse{
-				Error: fmt.Sprintf("failed reading partitions: %s", err.Error()),
+				Error: fmt.Sprintf("failed reading payload: %s", err.Error()),
 			}
 		}
 
-		pass, err := c.waitPass(b, 30)
+		if payload.Partition == nil {
+			return pluggable.EventResponse{
+				Error: "partition is required in payload",
+			}
+		}
+
+		// Load config from collector first (for TPMDevice, etc.)
+		// This ensures we have defaults even if payload doesn't provide them
+		configFromCollector := LoadConfigFromCollector(c.Logger)
+
+		// Apply config from collector to client
+		c.Config = configFromCollector
+
+		c.Logger.Debugf("Loaded config from collector: TPMDevice=%s, Server=%s, MDNS=%t",
+			c.Config.Kcrypt.TPMDevice, c.Config.Kcrypt.Challenger.Server, c.Config.Kcrypt.Challenger.MDNS)
+
+		// Apply config from payload (workload values take precedence)
+		// Only override if payload provides values
+		if payload.ChallengerServer != "" {
+			c.Logger.Debugf("Using ChallengerServer from payload: %s", payload.ChallengerServer)
+			c.Config.Kcrypt.Challenger.Server = payload.ChallengerServer
+		}
+		if payload.MDNS {
+			c.Logger.Debugf("Using MDNS from payload: %t", payload.MDNS)
+			c.Config.Kcrypt.Challenger.MDNS = payload.MDNS
+		}
+
+		c.Logger.Debugf("Final config: TPMDevice=%s, Server=%s, MDNS=%t",
+			c.Config.Kcrypt.TPMDevice, c.Config.Kcrypt.Challenger.Server, c.Config.Kcrypt.Challenger.MDNS)
+
+		pass, err := c.GetPassphrase(payload.Partition, 30)
 		if err != nil {
 			return pluggable.EventResponse{
 				Error: fmt.Sprintf("failed getting pass: %s", err.Error()),
@@ -63,114 +80,233 @@ func (c *Client) Start() error {
 		}
 	})
 
-	return factory.Run(pluggable.EventType(os.Args[1]), os.Stdin, os.Stdout)
+	return factory.Run(eventType, os.Stdin, os.Stdout)
 }
 
-func (c *Client) generatePass(postEndpoint string, headers map[string]string, p *block.Partition) error {
+// GetPassphrase retrieves a passphrase for the given partition - core business logic
+// ❯ echo '{ "data": "{ \\"label\\": \\"LABEL\\" }"}' | sudo -E WSS_SERVER="http://localhost:8082/challenge" ./challenger "discovery.password"
+func (c *Client) GetPassphrase(partition *types.Partition, attempts int) (string, error) {
+	serverURL := c.Config.Kcrypt.Challenger.Server
 
-	rand := utils.RandomString(32)
-	pass, err := tpm.EncryptBlob([]byte(rand))
-	if err != nil {
-		return err
+	// Server details are required - local passphrase storage has been moved to kairos-sdk
+	if serverURL == "" {
+		return "", fmt.Errorf("challenger server URL is required (challenger_server must be configured or provided via payload)")
 	}
-	bpass := base64.RawURLEncoding.EncodeToString(pass)
 
+	additionalHeaders := map[string]string{}
+	var err error
+	if c.Config.Kcrypt.Challenger.MDNS {
+		serverURL, additionalHeaders, err = queryMDNS(serverURL, c.Logger)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	c.Logger.Debugf("Starting TPM attestation flow with server: %s", serverURL)
+	return c.waitPassWithTPMAttestation(serverURL, additionalHeaders, partition, attempts)
+}
+
+// waitPassWithTPMAttestation implements the new TPM remote attestation flow over WebSocket
+func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders map[string]string, p *types.Partition, attempts int) (string, error) {
+	attestationEndpoint := fmt.Sprintf("%s/tpm-attestation", serverURL)
+	c.Logger.Debugf("Debug: TPM attestation endpoint: %s", attestationEndpoint)
+
+	// Step 1: Initialize Remote Attestation Client (outside the retry loop)
+	c.Logger.Debugf("Debug: Initializing Remote Attestation Client")
+	clientOpts := []tpm.Option{}
+	if c.Config.Kcrypt.TPMDevice != "" {
+		c.Logger.Debugf("Debug: Using TPM device: %s", c.Config.Kcrypt.TPMDevice)
+		clientOpts = append(clientOpts, tpm.WithTPMDevice(c.Config.Kcrypt.TPMDevice))
+	}
+	attestationClient, err := attestation.NewRemoteAttestationClient(clientOpts...)
+	if err != nil {
+		return "", fmt.Errorf("failed to create attestation client: %w", err)
+	}
+	c.Logger.Debugf("Debug: Remote Attestation Client initialized successfully")
+
+	// Ensure client is properly closed when done
+	defer func() {
+		if closeErr := attestationClient.Close(); closeErr != nil {
+			c.Logger.Debugf("Warning: Failed to close attestation client: %v", closeErr)
+		}
+	}()
+
+	var lastErr error
+	for tries := range attempts {
+		c.Logger.Debugf("Debug: TPM attestation attempt %d/%d", tries+1, attempts)
+
+		// Step 2: Start WebSocket-based attestation flow
+		c.Logger.Debugf("Debug: Starting WebSocket-based attestation flow")
+		passphrase, err := c.performTPMAttestation(attestationEndpoint, additionalHeaders, attestationClient, p)
+		if err != nil {
+			c.Logger.Debugf("Failed TPM attestation: %v", err)
+			lastErr = err
+
+			// Don't retry on attestation failures (security rejections like quarantine, PCR mismatch, etc.)
+			// These are permanent failures, not transient network issues
+			if strings.Contains(err.Error(), "attestation failed") {
+				c.Logger.Debugf("Attestation failure detected, not retrying")
+				return "", err
+			}
+
+			time.Sleep(NetworkRetryDelay)
+			continue
+		}
+
+		return passphrase, nil
+	}
+
+	if lastErr != nil {
+		return "", fmt.Errorf("exhausted all attempts (%d) for TPM attestation, last error: %w", attempts, lastErr)
+	}
+	return "", fmt.Errorf("exhausted all attempts (%d) for TPM attestation", attempts)
+}
+
+// isLiveCDMode checks if the system is running in livecd mode
+// using kairos-sdk state detection (same as `kairos-agent state get boot`)
+func isLiveCDMode(logger types.KairosLogger) bool {
+	runtime, err := state.NewRuntimeWithLogger(logger.Logger)
+	if err != nil {
+		logger.Debugf("Failed to detect runtime state, assuming not livecd: %v", err)
+		return false
+	}
+
+	// Check if boot state is LiveCD
+	isLiveCD := runtime.BootState == state.LiveCD
+	logger.Debugf("Detected boot state: %s (isLiveCD: %v)", runtime.BootState, isLiveCD)
+	return isLiveCD
+}
+
+// performTPMAttestation handles the complete attestation flow over a single WebSocket connection
+func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[string]string, attestationClient *attestation.RemoteAttestationClient, p *types.Partition) (string, error) {
+	c.Logger.Debugf("Debug: Creating WebSocket connection to endpoint: %s", endpoint)
+	c.Logger.Debugf("Debug: Partition details - Label: %s, Name: %s, UUID: %s", p.FilesystemLabel, p.Name, p.UUID)
+	c.Logger.Debugf("Debug: Certificate length: %d", len(c.Config.Kcrypt.Challenger.Certificate))
+
+	// Create WebSocket connection
 	opts := []tpm.Option{
-		tpm.WithCAs([]byte(c.Config.Kcrypt.Challenger.Certificate)),
-		tpm.AppendCustomCAToSystemCA,
 		tpm.WithAdditionalHeader("label", p.FilesystemLabel),
 		tpm.WithAdditionalHeader("name", p.Name),
 		tpm.WithAdditionalHeader("uuid", p.UUID),
 	}
-	for k, v := range headers {
+
+	// Only add certificate options if a certificate is provided
+	if len(c.Config.Kcrypt.Challenger.Certificate) > 0 {
+		c.Logger.Debugf("Debug: Adding certificate validation options")
+		opts = append(opts,
+			tpm.WithCAs([]byte(c.Config.Kcrypt.Challenger.Certificate)),
+			tpm.AppendCustomCAToSystemCA,
+		)
+	} else {
+		c.Logger.Debugf("Debug: No certificate provided, using insecure connection")
+	}
+	for k, v := range additionalHeaders {
 		opts = append(opts, tpm.WithAdditionalHeader(k, v))
 	}
+	c.Logger.Debugf("Debug: WebSocket options configured, attempting connection...")
 
-	conn, err := tpm.Connection(postEndpoint, opts...)
+	// Add connection timeout to prevent hanging indefinitely
+	type connectionResult struct {
+		conn any
+		err  error
+	}
+
+	done := make(chan connectionResult, 1)
+
+	go func() {
+		c.Logger.Debugf("Debug: Using tpm.AttestationConnection for new TPM flow")
+		conn, err := tpm.AttestationConnection(endpoint, opts...)
+		c.Logger.Debugf("Debug: tpm.AttestationConnection returned with err: %v", err)
+		done <- connectionResult{conn: conn, err: err}
+	}()
+
+	var conn *websocket.Conn
+	select {
+	case result := <-done:
+		if result.err != nil {
+			c.Logger.Debugf("Debug: WebSocket connection failed: %v", result.err)
+			return "", fmt.Errorf("creating WebSocket connection: %w", result.err)
+		}
+		var ok bool
+		conn, ok = result.conn.(*websocket.Conn)
+		if !ok {
+			return "", fmt.Errorf("unexpected connection type")
+		}
+		c.Logger.Debugf("Debug: WebSocket connection established successfully")
+	case <-time.After(10 * time.Second):
+		c.Logger.Debugf("Debug: WebSocket connection timed out after 10 seconds")
+		return "", fmt.Errorf("WebSocket connection timed out")
+	}
+
+	defer conn.Close() //nolint:errcheck
+
+	// Protocol Step 1: Create and send attestation init
+	c.Logger.Debugf("Debug: Creating attestation init")
+
+	// Check if we're in livecd mode - if so, defer PCR enrollment
+	var init *attestation.AttestationInit
+	var err error
+	if isLiveCDMode(c.Logger) {
+		c.Logger.Debugf("Debug: LiveCD mode detected - deferring PCR enrollment")
+		init, err = attestationClient.CreateInitDeferredEnrollment()
+	} else {
+		init, err = attestationClient.CreateInit()
+	}
 	if err != nil {
-		return err
+		return "", fmt.Errorf("creating attestation init: %w", err)
 	}
 
-	return conn.WriteJSON(payload.Data{Passphrase: bpass, GeneratedBy: constants.TPMSecret})
-}
-
-func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err error) {
-	additionalHeaders := map[string]string{}
-	serverURL := c.Config.Kcrypt.Challenger.Server
-
-	// If we don't have any server configured, just do local
-	if serverURL == "" {
-		return localPass(c.Config)
+	c.Logger.Debugf("Debug: Sending attestation init to server")
+	if err := conn.WriteJSON(init); err != nil {
+		return "", fmt.Errorf("sending attestation init: %w", err)
 	}
+	c.Logger.Debugf("Debug: Attestation init sent successfully")
 
-	if c.Config.Kcrypt.Challenger.MDNS {
-		serverURL, additionalHeaders, err = queryMDNS(serverURL)
+	// Protocol Step 2: Receive challenge from server
+	c.Logger.Debugf("Debug: Waiting for challenge from server")
+	var challenge attestation.AttestationChallenge
+	if err := conn.ReadJSON(&challenge); err != nil {
+		return "", fmt.Errorf("reading challenge from server: %w", err)
 	}
+	c.Logger.Debugf("Challenge received")
 
-	getEndpoint := fmt.Sprintf("%s/getPass", serverURL)
-	postEndpoint := fmt.Sprintf("%s/postPass", serverURL)
-
-	for tries := 0; tries < attempts; tries++ {
-		var generated bool
-		pass, generated, err = getPass(getEndpoint, additionalHeaders, c.Config.Kcrypt.Challenger.Certificate, p)
-		if err == errPartNotFound {
-			// IF server doesn't have a pass for us, then we generate one and we set it
-			err = c.generatePass(postEndpoint, additionalHeaders, p)
-			if err != nil {
-				return
-			}
-			// Attempt to fetch again - validate that the server has it now
-			tries = 0
-			continue
-		}
-
-		if generated { // passphrase is encrypted
-			return c.decryptPassphrase(pass)
-		}
-
-		if err == errBadCertificate { // No need to retry, won't succeed.
-			return
-		}
-
-		if err == nil { // passphrase available, no errors
-			return
-		}
-
-		logToFile("Failed with error: %s . Will retry.\n", err.Error())
-		time.Sleep(1 * time.Second) // network errors? retry
-	}
-
-	return
-}
-
-// decryptPassphrase decodes (base64) and decrypts the passphrase returned
-// by the challenger server.
-func (c *Client) decryptPassphrase(pass string) (string, error) {
-	blob, err := base64.RawURLEncoding.DecodeString(pass)
+	// Protocol Step 3: Handle challenge and create proof
+	c.Logger.Debugf("Debug: Handling challenge")
+	// Use default PCRs for now - this could be made configurable
+	pcrs := []int{0, 7, 11} // Common PCRs used in the system
+	proof, err := attestationClient.HandleChallenge(&challenge, pcrs)
 	if err != nil {
-		return "", err
+		c.Logger.Debugf("Debug: HandleChallenge failed: %v", err)
+		return "", fmt.Errorf("handling challenge: %w", err)
+	}
+	c.Logger.Debugf("Debug: Challenge handled successfully")
+
+	// Protocol Step 4: Send proof to server
+	c.Logger.Debugf("Debug: Sending proof to server")
+	if err := conn.WriteJSON(proof); err != nil {
+		return "", fmt.Errorf("sending proof: %w", err)
+	}
+	c.Logger.Debugf("Proof sent")
+
+	// Protocol Step 5: Receive passphrase response from server
+	c.Logger.Debugf("Debug: Waiting for passphrase response")
+	var response attestation.AttestationResponse
+	if err := conn.ReadJSON(&response); err != nil {
+		return "", fmt.Errorf("reading passphrase response: %w", err)
+	}
+	c.Logger.Debugf("Response received")
+
+	// Check if the server returned an error
+	if response.Error != "" {
+		c.Logger.Debugf("Server returned error: %s", response.Error)
+		return "", fmt.Errorf("attestation failed: %s", response.Error)
 	}
 
-	// Decrypt and return it to unseal the LUKS volume
-	opts := []tpm.TPMOption{}
-	if c.Config.Kcrypt.Challenger.CIndex != "" {
-		opts = append(opts, tpm.WithIndex(c.Config.Kcrypt.Challenger.CIndex))
+	// Check if we received an empty passphrase (shouldn't happen if no error, but defensive check)
+	if len(response.Passphrase) == 0 {
+		return "", fmt.Errorf("server returned empty passphrase without error message")
 	}
-	if c.Config.Kcrypt.Challenger.TPMDevice != "" {
-		opts = append(opts, tpm.WithDevice(c.Config.Kcrypt.Challenger.TPMDevice))
-	}
-	passBytes, err := tpm.DecryptBlob(blob, opts...)
 
-	return string(passBytes), err
-}
-
-func logToFile(format string, a ...any) {
-	s := fmt.Sprintf(format, a...)
-	file, err := os.OpenFile(LOGFILE, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		panic(err)
-	}
-	defer file.Close()
-
-	file.WriteString(s)
+	c.Logger.Debugf("Passphrase received successfully")
+	return string(response.Passphrase), nil
 }

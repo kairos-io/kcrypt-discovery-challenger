@@ -57,4 +57,8 @@ kubectl apply -k "$SCRIPT_DIR/../tests/assets/"
 # https://stackoverflow.com/a/6752280
 export KMS_ADDRESS="10.0.2.2.challenger.sslip.io"
 
+# The tpm emulator needs CGO
+# https://github.com/google/go-tpm-tools/blob/215e2ab8d3ee0a9aab1249e908313c2ecddd692e/simulator/internal/internal_cross.go#L19
+export CGO_ENABLED=1
+
 go run github.com/onsi/ginkgo/v2/ginkgo -v --nodes $GINKGO_NODES --label-filter $LABEL --fail-fast -r ./tests/

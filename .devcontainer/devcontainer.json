@@ -5,8 +5,7 @@
     "extensions": [
       "ms-azuretools.vscode-docker",
       "golang.Go",
-      "MS-vsliveshare.vsliveshare",
-      "earthly.earthfile-syntax-highlighting"
+        "MS-vsliveshare.vsliveshare"
     ],
 
     // Adds VS Code settings.json values into the environment.
