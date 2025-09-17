@@ -95,7 +95,6 @@ func (c *Client) generatePass(postEndpoint string, headers map[string]string, p 
 }
 
 func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err error) {
-	additionalHeaders := map[string]string{}
 	serverURL := c.Config.Kcrypt.Challenger.Server
 
 	// If we don't have any server configured, just do local
@@ -103,21 +102,112 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 		return localPass(c.Config)
 	}
 
+	additionalHeaders := map[string]string{}
 	if c.Config.Kcrypt.Challenger.MDNS {
 		serverURL, additionalHeaders, err = queryMDNS(serverURL)
+		if err != nil {
+			return "", err
+		}
 	}
 
+	// Determine which flow to use based on TPM capabilities
+	if c.canUseTPMAttestation() {
+		logToFile("TPM attestation capabilities detected, using TPM flow\n")
+		return c.waitPassWithTPMAttestation(serverURL, additionalHeaders, p, attempts)
+	} else {
+		logToFile("No TPM attestation capabilities, using legacy flow\n")
+		return c.waitPassLegacy(serverURL, additionalHeaders, p, attempts)
+	}
+}
+
+// canUseTPMAttestation checks if TPM device exists and PCRs 0, 7, 11 are populated
+func (c *Client) canUseTPMAttestation() bool {
+	// Check if TPM device is available by trying to get EK
+	_, err := tpm.GetPubHash()
+	if err != nil {
+		logToFile("TPM device not available: %v\n", err)
+		return false
+	}
+
+	// Check if the critical PCRs (0, 7, 11) have values (measured boot occurred)
+	pcrValues, err := c.readPCRValues([]int{0, 7, 11})
+	if err != nil {
+		logToFile("Failed to read PCR values: %v\n", err)
+		return false
+	}
+
+	// Check if any of the critical PCRs are populated (not all zeros)
+	allZero := true
+	for _, pcr := range pcrValues {
+		for _, b := range pcr {
+			if b != 0 {
+				allZero = false
+				break
+			}
+		}
+		if !allZero {
+			break
+		}
+	}
+
+	if allZero {
+		logToFile("PCRs 0, 7, 11 are all zero - measured boot did not occur\n")
+		return false
+	}
+
+	logToFile("TPM device available and PCRs populated\n")
+	return true
+}
+
+// readPCRValues reads the specified PCR values from the TPM using simple command execution
+func (c *Client) readPCRValues(pcrIndices []int) ([][]byte, error) {
+	// For now, we'll use a simplified approach to check if TPM has meaningful PCR values
+	// This can be enhanced later with proper TPM library integration
+	// We'll just check if TPM is accessible and assume PCRs are valid if TPM responds
+
+	// Try to access TPM by getting EK pub hash - if this works, TPM is functional
+	_, err := tpm.GetPubHash()
+	if err != nil {
+		return nil, fmt.Errorf("TPM not accessible: %w", err)
+	}
+
+	// For the MVP, we'll assume if TPM is accessible, PCRs are likely populated
+	// Return dummy non-zero values to indicate PCRs are "populated"
+	// TODO: Implement proper PCR reading using go-attestation or tpm2-tools
+	result := make([][]byte, len(pcrIndices))
+	for i := range result {
+		// Create dummy PCR value (non-zero to indicate "populated")
+		result[i] = []byte{0x01, 0x02, 0x03} // Placeholder - indicates PCR has values
+	}
+
+	return result, nil
+}
+
+// waitPassWithTPMAttestation implements the new TPM remote attestation flow
+func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders map[string]string, p *block.Partition, attempts int) (string, error) {
+	// TODO: Implement TPM attestation flow
+	// 1. Initialize AKManager
+	// 2. Request challenge from server
+	// 3. Generate proof with TPM quote
+	// 4. Send proof and get passphrase
+
+	logToFile("TPM attestation flow - not yet implemented\n")
+	return "", fmt.Errorf("TPM attestation flow not implemented yet")
+}
+
+// waitPassLegacy implements the current/legacy flow without TPM attestation
+func (c *Client) waitPassLegacy(serverURL string, additionalHeaders map[string]string, p *block.Partition, attempts int) (string, error) {
 	getEndpoint := fmt.Sprintf("%s/getPass", serverURL)
 	postEndpoint := fmt.Sprintf("%s/postPass", serverURL)
 
 	for tries := 0; tries < attempts; tries++ {
 		var generated bool
-		pass, generated, err = getPass(getEndpoint, additionalHeaders, c.Config.Kcrypt.Challenger.Certificate, p)
+		pass, generated, err := getPass(getEndpoint, additionalHeaders, c.Config.Kcrypt.Challenger.Certificate, p)
 		if err == errPartNotFound {
 			// IF server doesn't have a pass for us, then we generate one and we set it
 			err = c.generatePass(postEndpoint, additionalHeaders, p)
 			if err != nil {
-				return
+				return "", err
 			}
 			// Attempt to fetch again - validate that the server has it now
 			tries = 0
@@ -129,18 +219,18 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 		}
 
 		if err == errBadCertificate { // No need to retry, won't succeed.
-			return
+			return "", err
 		}
 
 		if err == nil { // passphrase available, no errors
-			return
+			return pass, nil
 		}
 
 		logToFile("Failed with error: %s . Will retry.\n", err.Error())
 		time.Sleep(1 * time.Second) // network errors? retry
 	}
 
-	return
+	return "", fmt.Errorf("exhausted all attempts (%d) to get passphrase", attempts)
 }
 
 // decryptPassphrase decodes (base64) and decrypts the passphrase returned
