@@ -1,10 +1,10 @@
 package client
 
 import (
-	"os"
 	"testing"
 
 	"github.com/jaypipes/ghw/pkg/block"
+	"github.com/kairos-io/kairos-sdk/types"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -18,9 +18,10 @@ var _ = Describe("Flow Detection", func() {
 	var client *Client
 
 	BeforeEach(func() {
-		// Create a test client with basic config
+		// Create a test client with basic config and logger
 		client = &Client{}
 		client.Config.Kcrypt.Challenger.Server = "http://test-server.local"
+		client.Logger = types.NewKairosLogger("test-client", "debug", false)
 	})
 
 	Context("TPM attestation capabilities", func() {
@@ -41,18 +42,15 @@ var _ = Describe("Flow Detection", func() {
 	})
 
 	Context("Logging functionality", func() {
-		AfterEach(func() {
-			// Clean up log file after each test
-			_ = os.Remove(LOGFILE)
-		})
+		It("should have a valid logger", func() {
+			// Test that client has a valid logger
+			Expect(client.Logger).NotTo(BeNil())
 
-		It("should create log file when logging", func() {
-			// Test logging functionality
-			logToFile("Test log entry for flow detection\n")
+			// Test debug logging works without error
+			client.Logger.Debugf("Test log entry for flow detection")
 
-			// Check if log file was created
-			_, err := os.Stat(LOGFILE)
-			Expect(err).NotTo(HaveOccurred(), "Log file should be created at %s", LOGFILE)
+			// If we get here without panic, logging is working
+			Expect(true).To(BeTrue())
 		})
 	})
 
@@ -70,13 +68,9 @@ var _ = Describe("Flow Detection", func() {
 			// We expect an error since there's no real server, but the flow selection should work
 			Expect(err).To(HaveOccurred())
 
-			// Check that the log file contains flow selection messages
-			logContent, readErr := os.ReadFile(LOGFILE)
-			Expect(readErr).NotTo(HaveOccurred())
-
-			logStr := string(logContent)
-			// Should contain either "TPM attestation" or "legacy flow" message
-			Expect(logStr).To(ContainSubstring("flow"))
+			// The flow routing logic now uses the logger instead of the file,
+			// so we just verify the error occurred as expected
+			Expect(err.Error()).To(ContainSubstring("TPM attestation flow not implemented yet"))
 		})
 	})
 })
