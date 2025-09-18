@@ -32,6 +32,11 @@ func NewClient() (*Client, error) {
 }
 
 // ❯ echo '{ "data": "{ \\"label\\": \\"LABEL\\" }"}' | sudo -E WSS_SERVER="http://localhost:8082/challenge" ./challenger "discovery.password"
+// GetPassphrase retrieves a passphrase for the given partition - core business logic
+func (c *Client) GetPassphrase(partition *block.Partition, attempts int) (string, error) {
+	return c.waitPass(partition, attempts)
+}
+
 func (c *Client) Start() error {
 	if err := os.RemoveAll(LOGFILE); err != nil { // Start fresh
 		return fmt.Errorf("removing the logfile: %w", err)
@@ -51,7 +56,8 @@ func (c *Client) Start() error {
 			}
 		}
 
-		pass, err := c.waitPass(b, 30)
+		// Use the extracted core logic
+		pass, err := c.GetPassphrase(b, 30)
 		if err != nil {
 			return pluggable.EventResponse{
 				Error: fmt.Sprintf("failed getting pass: %s", err.Error()),
