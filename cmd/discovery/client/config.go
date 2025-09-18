@@ -2,6 +2,7 @@ package client
 
 import (
 	"github.com/kairos-io/kairos-sdk/collector"
+	"github.com/kairos-io/kairos-sdk/types"
 	"gopkg.in/yaml.v3"
 )
 
@@ -14,6 +15,7 @@ var confScanDirs = []string{"/oem", "/sysroot/oem", "/tmp/oem"}
 
 type Client struct {
 	Config Config
+	Logger types.KairosLogger
 }
 
 type Config struct {
