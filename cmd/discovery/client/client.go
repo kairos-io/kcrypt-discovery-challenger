@@ -11,6 +11,7 @@ import (
 	"github.com/kairos-io/kairos-challenger/pkg/constants"
 	"github.com/kairos-io/kairos-challenger/pkg/payload"
 	"github.com/kairos-io/kairos-sdk/kcrypt/bus"
+	"github.com/kairos-io/kairos-sdk/types"
 	"github.com/kairos-io/tpm-helpers"
 	"github.com/mudler/go-pluggable"
 	"github.com/mudler/yip/pkg/utils"
@@ -23,12 +24,16 @@ var errPartNotFound error = fmt.Errorf("pass for partition not found")
 var errBadCertificate error = fmt.Errorf("unknown certificate")
 
 func NewClient() (*Client, error) {
+	return NewClientWithLogger(types.NewKairosLogger("kcrypt-challenger-client", "error", false))
+}
+
+func NewClientWithLogger(logger types.KairosLogger) (*Client, error) {
 	conf, err := unmarshalConfig()
 	if err != nil {
 		return nil, err
 	}
 
-	return &Client{Config: conf}, nil
+	return &Client{Config: conf, Logger: logger}, nil
 }
 
 // ❯ echo '{ "data": "{ \\"label\\": \\"LABEL\\" }"}' | sudo -E WSS_SERVER="http://localhost:8082/challenge" ./challenger "discovery.password"
@@ -110,7 +115,7 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 
 	additionalHeaders := map[string]string{}
 	if c.Config.Kcrypt.Challenger.MDNS {
-		serverURL, additionalHeaders, err = queryMDNS(serverURL)
+		serverURL, additionalHeaders, err = queryMDNS(serverURL, c.Logger)
 		if err != nil {
 			return "", err
 		}
@@ -118,10 +123,10 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 
 	// Determine which flow to use based on TPM capabilities
 	if c.canUseTPMAttestation() {
-		logToFile("TPM attestation capabilities detected, using TPM flow\n")
+		c.Logger.Debugf("TPM attestation capabilities detected, using TPM flow")
 		return c.waitPassWithTPMAttestation(serverURL, additionalHeaders, p, attempts)
 	} else {
-		logToFile("No TPM attestation capabilities, using legacy flow\n")
+		c.Logger.Debugf("No TPM attestation capabilities, using legacy flow")
 		return c.waitPassLegacy(serverURL, additionalHeaders, p, attempts)
 	}
 }
@@ -131,14 +136,14 @@ func (c *Client) canUseTPMAttestation() bool {
 	// Check if TPM device is available by trying to get EK
 	_, err := tpm.GetPubHash()
 	if err != nil {
-		logToFile("TPM device not available: %v\n", err)
+		c.Logger.Debugf("TPM device not available: %v", err)
 		return false
 	}
 
 	// Check if the critical PCRs (0, 7, 11) have values (measured boot occurred)
 	pcrValues, err := c.readPCRValues([]int{0, 7, 11})
 	if err != nil {
-		logToFile("Failed to read PCR values: %v\n", err)
+		c.Logger.Debugf("Failed to read PCR values: %v", err)
 		return false
 	}
 
@@ -157,11 +162,11 @@ func (c *Client) canUseTPMAttestation() bool {
 	}
 
 	if allZero {
-		logToFile("PCRs 0, 7, 11 are all zero - measured boot did not occur\n")
+		c.Logger.Debugf("PCRs 0, 7, 11 are all zero - measured boot did not occur")
 		return false
 	}
 
-	logToFile("TPM device available and PCRs populated\n")
+	c.Logger.Debugf("TPM device available and PCRs populated")
 	return true
 }
 
@@ -197,7 +202,7 @@ func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders 
 	// 3. Generate proof with TPM quote
 	// 4. Send proof and get passphrase
 
-	logToFile("TPM attestation flow - not yet implemented\n")
+	c.Logger.Debugf("TPM attestation flow - not yet implemented")
 	return "", fmt.Errorf("TPM attestation flow not implemented yet")
 }
 
@@ -232,7 +237,7 @@ func (c *Client) waitPassLegacy(serverURL string, additionalHeaders map[string]s
 			return pass, nil
 		}
 
-		logToFile("Failed with error: %s . Will retry.\n", err.Error())
+		c.Logger.Debugf("Failed with error: %s . Will retry.", err.Error())
 		time.Sleep(1 * time.Second) // network errors? retry
 	}
 
@@ -258,15 +263,4 @@ func (c *Client) decryptPassphrase(pass string) (string, error) {
 	passBytes, err := tpm.DecryptBlob(blob, opts...)
 
 	return string(passBytes), err
-}
-
-func logToFile(format string, a ...any) {
-	s := fmt.Sprintf(format, a...)
-	file, err := os.OpenFile(LOGFILE, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		panic(err)
-	}
-	defer file.Close()
-
-	file.WriteString(s)
 }

@@ -29,7 +29,10 @@ func main() {
 // RunPluginMode implements the go-pluggable interface
 // Returns exit code for testability
 func RunPluginMode() int {
-	c, err := client.NewClient()
+	// In plugin mode, use quiet=true to log to file instead of console and debug level for detailed logs
+	// This will write debug logs to /var/log/kairos/kcrypt-discovery-challenger.log
+	logger := types.NewKairosLogger("kcrypt-discovery-challenger", "debug", true)
+	c, err := client.NewClientWithLogger(logger)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating client: %v\n", err)
 		return 1
@@ -167,12 +170,6 @@ Configuration:
 	passphrase, err := c.GetPassphrase(partition, *attempts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting passphrase: %v\n", err)
-
-		// Check if log file exists and show relevant information
-		if logContent, readErr := os.ReadFile(client.LOGFILE); readErr == nil {
-			fmt.Fprintf(os.Stderr, "\nDebug information from %s:\n%s\n", client.LOGFILE, string(logContent))
-		}
-
 		return 1
 	}
 
@@ -207,8 +204,8 @@ func isEventDefined(i interface{}) bool {
 
 // createClientWithOverrides creates a client and applies CLI flag overrides to the config
 func createClientWithOverrides(serverURL string, enableMDNS bool, certificate string, logger types.KairosLogger, args []string) (*client.Client, error) {
-	// Start with the default config from files
-	c, err := client.NewClient()
+	// Start with the default config from files and pass the logger
+	c, err := client.NewClientWithLogger(logger)
 	if err != nil {
 		return nil, err
 	}
