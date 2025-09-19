@@ -7,18 +7,22 @@ import (
 	"os"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/jaypipes/ghw/pkg/block"
-	"github.com/kairos-io/kairos-challenger/pkg/constants"
-	"github.com/kairos-io/kairos-challenger/pkg/payload"
 	"github.com/kairos-io/kairos-sdk/kcrypt/bus"
 	"github.com/kairos-io/kairos-sdk/types"
 	"github.com/kairos-io/tpm-helpers"
 	"github.com/mudler/go-pluggable"
-	"github.com/mudler/yip/pkg/utils"
 )
 
 // Because of how go-pluggable works, we can't just print to stdout
 const LOGFILE = "/tmp/kcrypt-challenger-client.log"
+
+// Retry delays for different failure types
+const (
+	TPMRetryDelay     = 100 * time.Millisecond // Brief delay for TPM hardware busy/unavailable
+	NetworkRetryDelay = 1 * time.Second        // Longer delay for network/server issues
+)
 
 var errPartNotFound error = fmt.Errorf("pass for partition not found")
 var errBadCertificate error = fmt.Errorf("unknown certificate")
@@ -77,34 +81,6 @@ func (c *Client) Start() error {
 	return factory.Run(pluggable.EventType(os.Args[1]), os.Stdin, os.Stdout)
 }
 
-func (c *Client) generatePass(postEndpoint string, headers map[string]string, p *block.Partition) error {
-
-	rand := utils.RandomString(32)
-	pass, err := tpm.EncryptBlob([]byte(rand))
-	if err != nil {
-		return err
-	}
-	bpass := base64.RawURLEncoding.EncodeToString(pass)
-
-	opts := []tpm.Option{
-		tpm.WithCAs([]byte(c.Config.Kcrypt.Challenger.Certificate)),
-		tpm.AppendCustomCAToSystemCA,
-		tpm.WithAdditionalHeader("label", p.FilesystemLabel),
-		tpm.WithAdditionalHeader("name", p.Name),
-		tpm.WithAdditionalHeader("uuid", p.UUID),
-	}
-	for k, v := range headers {
-		opts = append(opts, tpm.WithAdditionalHeader(k, v))
-	}
-
-	conn, err := tpm.Connection(postEndpoint, opts...)
-	if err != nil {
-		return err
-	}
-
-	return conn.WriteJSON(payload.Data{Passphrase: bpass, GeneratedBy: constants.TPMSecret})
-}
-
 func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err error) {
 	serverURL := c.Config.Kcrypt.Challenger.Server
 
@@ -121,127 +97,150 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 		}
 	}
 
-	// Determine which flow to use based on TPM capabilities
-	if c.canUseTPMAttestation() {
-		c.Logger.Debugf("TPM attestation capabilities detected, using TPM flow")
-		return c.waitPassWithTPMAttestation(serverURL, additionalHeaders, p, attempts)
-	} else {
-		c.Logger.Debugf("No TPM attestation capabilities, using legacy flow")
-		return c.waitPassLegacy(serverURL, additionalHeaders, p, attempts)
-	}
+	// Only TPM attestation flow is supported in the new architecture
+	c.Logger.Debugf("Starting TPM attestation flow with server: %s", serverURL)
+	return c.waitPassWithTPMAttestation(serverURL, additionalHeaders, p, attempts)
 }
 
-// canUseTPMAttestation checks if TPM device exists and PCRs 0, 7, 11 are populated
-func (c *Client) canUseTPMAttestation() bool {
-	// Check if TPM device is available by trying to get EK
-	_, err := tpm.GetPubHash()
-	if err != nil {
-		c.Logger.Debugf("TPM device not available: %v", err)
-		return false
-	}
-
-	// Check if the critical PCRs (0, 7, 11) have values (measured boot occurred)
-	pcrValues, err := c.readPCRValues([]int{0, 7, 11})
-	if err != nil {
-		c.Logger.Debugf("Failed to read PCR values: %v", err)
-		return false
-	}
-
-	// Check if any of the critical PCRs are populated (not all zeros)
-	allZero := true
-	for _, pcr := range pcrValues {
-		for _, b := range pcr {
-			if b != 0 {
-				allZero = false
-				break
-			}
-		}
-		if !allZero {
-			break
-		}
-	}
-
-	if allZero {
-		c.Logger.Debugf("PCRs 0, 7, 11 are all zero - measured boot did not occur")
-		return false
-	}
-
-	c.Logger.Debugf("TPM device available and PCRs populated")
-	return true
-}
-
-// readPCRValues reads the specified PCR values from the TPM using simple command execution
-func (c *Client) readPCRValues(pcrIndices []int) ([][]byte, error) {
-	// For now, we'll use a simplified approach to check if TPM has meaningful PCR values
-	// This can be enhanced later with proper TPM library integration
-	// We'll just check if TPM is accessible and assume PCRs are valid if TPM responds
-
-	// Try to access TPM by getting EK pub hash - if this works, TPM is functional
-	_, err := tpm.GetPubHash()
-	if err != nil {
-		return nil, fmt.Errorf("TPM not accessible: %w", err)
-	}
-
-	// For the MVP, we'll assume if TPM is accessible, PCRs are likely populated
-	// Return dummy non-zero values to indicate PCRs are "populated"
-	// TODO: Implement proper PCR reading using go-attestation or tpm2-tools
-	result := make([][]byte, len(pcrIndices))
-	for i := range result {
-		// Create dummy PCR value (non-zero to indicate "populated")
-		result[i] = []byte{0x01, 0x02, 0x03} // Placeholder - indicates PCR has values
-	}
-
-	return result, nil
-}
-
-// waitPassWithTPMAttestation implements the new TPM remote attestation flow
+// waitPassWithTPMAttestation implements the new TPM remote attestation flow over WebSocket
 func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders map[string]string, p *block.Partition, attempts int) (string, error) {
-	// TODO: Implement TPM attestation flow
-	// 1. Initialize AKManager
-	// 2. Request challenge from server
-	// 3. Generate proof with TPM quote
-	// 4. Send proof and get passphrase
-
-	c.Logger.Debugf("TPM attestation flow - not yet implemented")
-	return "", fmt.Errorf("TPM attestation flow not implemented yet")
-}
-
-// waitPassLegacy implements the current/legacy flow without TPM attestation
-func (c *Client) waitPassLegacy(serverURL string, additionalHeaders map[string]string, p *block.Partition, attempts int) (string, error) {
-	getEndpoint := fmt.Sprintf("%s/getPass", serverURL)
-	postEndpoint := fmt.Sprintf("%s/postPass", serverURL)
+	attestationEndpoint := fmt.Sprintf("%s/tpm-attestation", serverURL)
+	c.Logger.Debugf("Debug: TPM attestation endpoint: %s", attestationEndpoint)
 
 	for tries := 0; tries < attempts; tries++ {
-		var generated bool
-		pass, generated, err := getPass(getEndpoint, additionalHeaders, c.Config.Kcrypt.Challenger.Certificate, p)
-		if err == errPartNotFound {
-			// IF server doesn't have a pass for us, then we generate one and we set it
-			err = c.generatePass(postEndpoint, additionalHeaders, p)
-			if err != nil {
-				return "", err
-			}
-			// Attempt to fetch again - validate that the server has it now
-			tries = 0
+		c.Logger.Debugf("Debug: TPM attestation attempt %d/%d", tries+1, attempts)
+
+		// Step 1: Initialize AK Manager
+		c.Logger.Debugf("Debug: Initializing AK Manager with handle file: /etc/kairos/ak.blob")
+		akManager, err := tpm.NewAKManager(tpm.WithAKHandleFile("/etc/kairos/ak.blob"))
+		if err != nil {
+			c.Logger.Debugf("Failed to create AK manager: %v", err)
+			time.Sleep(TPMRetryDelay)
+			continue
+		}
+		c.Logger.Debugf("Debug: AK Manager initialized successfully")
+
+		// Step 2: Ensure AK exists
+		c.Logger.Debugf("Debug: Getting or creating AK")
+		_, err = akManager.GetOrCreateAK()
+		if err != nil {
+			c.Logger.Debugf("Failed to get/create AK: %v", err)
+			time.Sleep(TPMRetryDelay)
+			continue
+		}
+		c.Logger.Debugf("Debug: AK obtained/created successfully")
+
+		// Step 3: Start WebSocket-based attestation flow
+		c.Logger.Debugf("Debug: Starting WebSocket-based attestation flow")
+		passphrase, err := c.performTPMAttestation(attestationEndpoint, additionalHeaders, akManager, p)
+		if err != nil {
+			c.Logger.Debugf("Failed TPM attestation: %v", err)
+			time.Sleep(NetworkRetryDelay)
 			continue
 		}
 
-		if generated { // passphrase is encrypted
-			return c.decryptPassphrase(pass)
-		}
-
-		if err == errBadCertificate { // No need to retry, won't succeed.
-			return "", err
-		}
-
-		if err == nil { // passphrase available, no errors
-			return pass, nil
-		}
-
-		c.Logger.Debugf("Failed with error: %s . Will retry.", err.Error())
-		time.Sleep(1 * time.Second) // network errors? retry
+		return passphrase, nil
 	}
 
-	return "", fmt.Errorf("exhausted all attempts (%d) to get passphrase", attempts)
+	return "", fmt.Errorf("exhausted all attempts (%d) for TPM attestation", attempts)
+}
+
+// performTPMAttestation handles the complete attestation flow over a single WebSocket connection
+func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[string]string, akManager *tpm.AKManager, p *block.Partition) (string, error) {
+	c.Logger.Debugf("Debug: Creating WebSocket connection to endpoint: %s", endpoint)
+	c.Logger.Debugf("Debug: Partition details - Label: %s, Name: %s, UUID: %s", p.FilesystemLabel, p.Name, p.UUID)
+	c.Logger.Debugf("Debug: Certificate length: %d", len(c.Config.Kcrypt.Challenger.Certificate))
+
+	// Create WebSocket connection
+	opts := []tpm.Option{
+		tpm.WithAdditionalHeader("label", p.FilesystemLabel),
+		tpm.WithAdditionalHeader("name", p.Name),
+		tpm.WithAdditionalHeader("uuid", p.UUID),
+	}
+
+	// Only add certificate options if a certificate is provided
+	if len(c.Config.Kcrypt.Challenger.Certificate) > 0 {
+		c.Logger.Debugf("Debug: Adding certificate validation options")
+		opts = append(opts,
+			tpm.WithCAs([]byte(c.Config.Kcrypt.Challenger.Certificate)),
+			tpm.AppendCustomCAToSystemCA,
+		)
+	} else {
+		c.Logger.Debugf("Debug: No certificate provided, using insecure connection")
+	}
+	for k, v := range additionalHeaders {
+		opts = append(opts, tpm.WithAdditionalHeader(k, v))
+	}
+	c.Logger.Debugf("Debug: WebSocket options configured, attempting connection...")
+
+	// Add connection timeout to prevent hanging indefinitely
+	type connectionResult struct {
+		conn interface{}
+		err  error
+	}
+
+	done := make(chan connectionResult, 1)
+
+	go func() {
+		c.Logger.Debugf("Debug: Using tpm.AttestationConnection for new TPM flow")
+		conn, err := tpm.AttestationConnection(endpoint, opts...)
+		c.Logger.Debugf("Debug: tpm.AttestationConnection returned with err: %v", err)
+		done <- connectionResult{conn: conn, err: err}
+	}()
+
+	var conn *websocket.Conn
+	select {
+	case result := <-done:
+		if result.err != nil {
+			c.Logger.Debugf("Debug: WebSocket connection failed: %v", result.err)
+			return "", fmt.Errorf("creating WebSocket connection: %w", result.err)
+		}
+		var ok bool
+		conn, ok = result.conn.(*websocket.Conn)
+		if !ok {
+			return "", fmt.Errorf("unexpected connection type")
+		}
+		c.Logger.Debugf("Debug: WebSocket connection established successfully")
+	case <-time.After(10 * time.Second):
+		c.Logger.Debugf("Debug: WebSocket connection timed out after 10 seconds")
+		return "", fmt.Errorf("WebSocket connection timed out")
+	}
+
+	defer conn.Close() //nolint:errcheck
+
+	// Protocol Step 1: Server sends challenge immediately upon connection (as per README)
+	// No need to send challenge request - server initiates
+	c.Logger.Debugf("Debug: Waiting for challenge from server")
+	var challengeResp tpm.AttestationChallengeResponse
+	if err := conn.ReadJSON(&challengeResp); err != nil {
+		return "", fmt.Errorf("reading challenge from server: %w", err)
+	}
+	c.Logger.Debugf("Challenge received - Enrolled: %t", challengeResp.Enrolled)
+
+	// Protocol Step 2: Create proof request using AK Manager
+	c.Logger.Debugf("Debug: Creating proof request from challenge response")
+	proofReq, err := akManager.CreateProofRequest(&challengeResp)
+	if err != nil {
+		return "", fmt.Errorf("creating proof request: %w", err)
+	}
+	c.Logger.Debugf("Debug: Proof request created successfully")
+
+	// Protocol Step 3: Send proof to server
+	c.Logger.Debugf("Debug: Sending proof request to server")
+	if err := conn.WriteJSON(proofReq); err != nil {
+		return "", fmt.Errorf("sending proof request: %w", err)
+	}
+	c.Logger.Debugf("Proof request sent")
+
+	// Protocol Step 4: Receive passphrase from server
+	c.Logger.Debugf("Debug: Waiting for passphrase response")
+	var proofResp tpm.ProofResponse
+	if err := conn.ReadJSON(&proofResp); err != nil {
+		return "", fmt.Errorf("reading passphrase response: %w", err)
+	}
+	c.Logger.Debugf("Passphrase received - Length: %d bytes", len(proofResp.Passphrase))
+
+	return string(proofResp.Passphrase), nil
 }
 
 // decryptPassphrase decodes (base64) and decrypts the passphrase returned

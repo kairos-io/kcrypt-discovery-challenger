@@ -12,15 +12,10 @@ import (
 	"github.com/go-logr/logr"
 
 	keyserverv1alpha1 "github.com/kairos-io/kairos-challenger/api/v1alpha1"
-	"github.com/kairos-io/kairos-challenger/pkg/constants"
 	"github.com/kairos-io/kairos-challenger/pkg/payload"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kairos-io/kairos-challenger/controllers"
 	tpm "github.com/kairos-io/tpm-helpers"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/gorilla/websocket"
@@ -89,12 +84,12 @@ func writeRead(conn *websocket.Conn, input []byte) ([]byte, error) {
 	return ioutil.ReadAll(reader)
 }
 
-func getPubHash(token string) (string, error) {
-	ek, _, err := tpm.GetAttestationData(token)
+func getPubHashFromEK(ekBytes []byte) (string, error) {
+	// Need to decode the EK bytes first to get the proper EK structure
+	ek, err := tpm.DecodeEK(ekBytes)
 	if err != nil {
 		return "", err
 	}
-
 	return tpm.DecodePubHash(ek)
 }
 
@@ -108,211 +103,9 @@ func Start(ctx context.Context, logger logr.Logger, kclient *kubernetes.Clientse
 
 	m := http.NewServeMux()
 
-	m.HandleFunc("/postPass", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			logger.Error(err, "upgrading connection")
-			return
-		}
-		defer func() {
-			err := conn.Close()
-			if err != nil {
-				logger.Error(err, "closing the connection")
-			}
-		}()
-
-		logger.Info("Receiving passphrase")
-		if err := tpm.AuthRequest(r, conn); err != nil {
-			errorMessage(conn, logger, err, "auth request")
-			return
-		}
-		logger.Info("[Receiving passphrase] auth succeeded")
-
-		token := r.Header.Get("Authorization")
-		hashEncoded, err := getPubHash(token)
-		if err != nil {
-			errorMessage(conn, logger, err, "decoding pubhash")
-			return
-		}
-		logger.Info("[Receiving passphrase] pubhash", "encodedhash", hashEncoded)
-
-		label := r.Header.Get("label")
-		name := r.Header.Get("name")
-		uuid := r.Header.Get("uuid")
-		v := &payload.Data{}
-		logger.Info("Reading request data", "label", label, "name", name, "uuid", uuid)
-
-		volumeList := &keyserverv1alpha1.SealedVolumeList{}
-		for {
-			if err := reconciler.List(ctx, volumeList, &client.ListOptions{Namespace: namespace}); err != nil {
-				logger.Error(err, "listing volumes")
-				continue
-			}
-			break
-		}
-
-		logger.Info("Looking up volume with request data")
-		sealedVolumeData := findVolumeFor(PassphraseRequestData{
-			TPMHash:    hashEncoded,
-			Label:      label,
-			DeviceName: name,
-			UUID:       uuid,
-		}, volumeList)
-
-		if sealedVolumeData == nil {
-			errorMessage(conn, logger, fmt.Errorf("no TPM Hash found for %s", hashEncoded), "")
-			return
-		}
-		logger.Info("[Looking up volume with request data] succeeded")
-
-		if err := conn.ReadJSON(v); err != nil {
-			logger.Error(err, "reading json from connection")
-			return
-		}
-
-		if !v.HasPassphrase() {
-			errorMessage(conn, logger, fmt.Errorf("invalid answer from client: doesn't contain any passphrase"), "")
-		}
-		if v.HasError() {
-			errorMessage(conn, logger, fmt.Errorf("error: %s", v.Error), v.Error)
-		}
-
-		secretName, secretPath := sealedVolumeData.DefaultSecret()
-		logger.Info("Looking up secret in with name", "name", secretName, "namespace", namespace)
-		_, err = kclient.CoreV1().Secrets(namespace).Get(ctx, secretName, v1.GetOptions{})
-		if err == nil {
-			logger.Info("Posted for already existing secret - ignoring")
-			return
-		}
-		if !apierrors.IsNotFound(err) {
-			errorMessage(conn, logger, err, "failed getting secret")
-			return
-		}
-
-		logger.Info("secret not found, creating one")
-		secret := corev1.Secret{
-			TypeMeta: v1.TypeMeta{
-				Kind:       "Secret",
-				APIVersion: "apps/v1",
-			},
-			ObjectMeta: v1.ObjectMeta{
-				Name:      secretName,
-				Namespace: namespace,
-			},
-			StringData: map[string]string{
-				secretPath:               v.Passphrase,
-				constants.GeneratedByKey: v.GeneratedBy,
-			},
-			Type: "Opaque",
-		}
-		_, err = kclient.CoreV1().Secrets(namespace).Create(ctx, &secret, v1.CreateOptions{})
-		if err != nil {
-			errorMessage(conn, logger, err, "failed during secret creation")
-		}
-		logger.Info("created new secret")
-	})
-
-	m.HandleFunc("/getPass", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			logger.Error(err, "upgrading connection")
-			return
-		}
-		defer func() {
-			err := conn.Close()
-			if err != nil {
-				logger.Error(err, "closing the connection")
-			}
-		}()
-
-		logger.Info("Received connection")
-		volumeList := &keyserverv1alpha1.SealedVolumeList{}
-		for {
-			if err := reconciler.List(ctx, volumeList, &client.ListOptions{Namespace: namespace}); err != nil {
-				logger.Error(err, "listing volumes")
-				continue
-			}
-			break
-		}
-
-		logger.Info("reading data from request")
-		token := r.Header.Get("Authorization")
-		label := r.Header.Get("label")
-		name := r.Header.Get("name")
-		uuid := r.Header.Get("uuid")
-
-		tokenStr := "empty"
-		if token != "" {
-			tokenStr = "not empty"
-		}
-		logger.Info("request data", "token", tokenStr, "label", label, "name", name, "uuid", uuid)
-
-		if err := tpm.AuthRequest(r, conn); err != nil {
-			logger.Error(err, "error validating challenge")
-			return
-		}
-
-		hashEncoded, err := getPubHash(token)
-		if err != nil {
-			logger.Error(err, "error decoding pubhash")
-			return
-		}
-
-		logger.Info("Looking up volume with request data")
-		sealedVolumeData := findVolumeFor(PassphraseRequestData{
-			TPMHash:    hashEncoded,
-			Label:      label,
-			DeviceName: name,
-			UUID:       uuid,
-		}, volumeList)
-
-		if sealedVolumeData == nil {
-			errorMessage(conn, logger, fmt.Errorf("no volume found with data from request and hash: %s", hashEncoded), "")
-			return
-		}
-		logger.Info("[Looking up volume with request data] succeeded")
-
-		if sealedVolumeData.Quarantined {
-			errorMessage(conn, logger, fmt.Errorf("quarantined: %s", sealedVolumeData.PartitionLabel), "")
-			return
-		}
-
-		secretName, secretPath := sealedVolumeData.DefaultSecret()
-
-		// 1. The admin sets a specific cleartext password from Kube manager
-		//      SealedVolume -> with a secret .
-		// 2. The admin just adds a SealedVolume associated with a TPM Hash ( you don't provide any passphrase )
-		// 3. There is no challenger server at all (offline mode)
-		//
-		logger.Info(fmt.Sprintf("looking up secret %s in namespace %s", secretName, namespace))
-		secret, err := kclient.CoreV1().Secrets(namespace).Get(ctx, secretName, v1.GetOptions{})
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				errorMessage(conn, logger, fmt.Errorf("No secret found for %s and %s", hashEncoded, sealedVolumeData.PartitionLabel), "")
-			} else {
-				errorMessage(conn, logger, err, "getting the secret from Kubernetes")
-			}
-
-			return
-		}
-		logger.Info(fmt.Sprintf("secret %s found in namespace %s", secretName, namespace))
-
-		passphrase := secret.Data[secretPath]
-		generatedBy := secret.Data[constants.GeneratedByKey]
-
-		writer, err := conn.NextWriter(websocket.BinaryMessage)
-		if err != nil {
-			logger.Error(err, "getting a writer from the connection")
-		}
-		p := payload.Data{Passphrase: string(passphrase), GeneratedBy: string(generatedBy)}
-		err = json.NewEncoder(writer).Encode(p)
-		if err != nil {
-			logger.Error(err, "writing passphrase to the websocket channel")
-		}
-		if err = writer.Close(); err != nil {
-			logger.Error(err, "closing the writer")
-			return
-		}
+	// TPM Attestation WebSocket endpoint
+	m.HandleFunc("/tpm-attestation", func(w http.ResponseWriter, r *http.Request) {
+		handleTPMAttestation(w, r, logger, reconciler, kclient, namespace)
 	})
 
 	s.Handler = logRequestHandler(logger, m)
@@ -392,4 +185,43 @@ func logRequestHandler(logger logr.Logger, h http.Handler) http.Handler {
 
 		h.ServeHTTP(w, r)
 	})
+}
+
+// handleTPMAttestation handles the TPM attestation flow using WebSocket protocol
+func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Logger, reconciler *controllers.SealedVolumeReconciler, kclient *kubernetes.Clientset, namespace string) {
+	logger.V(1).Info("Debug: Attempting to upgrade HTTP connection to WebSocket", "remoteAddr", r.RemoteAddr)
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		logger.Error(err, "upgrading connection for TPM attestation")
+		return
+	}
+	defer func() {
+		err := conn.Close()
+		if err != nil {
+			logger.Error(err, "closing the connection")
+		}
+	}()
+
+	logger.Info("Starting TPM attestation WebSocket flow")
+
+	// Get partition details from headers (sent by client)
+	label := r.Header.Get("label")
+	name := r.Header.Get("name")
+	uuid := r.Header.Get("uuid")
+	logger.Info("Partition details from client", "label", label, "name", name, "uuid", uuid)
+
+	// TODO: Implement complete WebSocket TPM attestation protocol
+	// This requires:
+	// 1. Get client's attestation data (EK + AttestationParameters)
+	// 2. Generate challenge using go-attestation native types
+	// 3. Send AttestationChallengeResponse to client
+	// 4. Wait for ProofRequest from client
+	// 5. Validate challenge response
+	// 6. TOFU: Generate/retrieve passphrase (requires SealedVolume CRD changes)
+	// 7. Send ProofResponse with passphrase
+
+	logger.Info("TPM attestation protocol implementation incomplete - requires SealedVolume CRD changes for TOFU")
+
+	// For now, just send an error response
+	errorMessage(conn, logger, fmt.Errorf("TPM attestation protocol not yet implemented"), "WebSocket TPM attestation")
 }
