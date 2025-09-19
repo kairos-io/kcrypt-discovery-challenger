@@ -277,6 +277,11 @@ func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[st
 	}
 	c.Logger.Debugf("Passphrase received - Length: %d bytes", len(proofResp.Passphrase))
 
+	// Check if we received an empty passphrase (indicates server error)
+	if len(proofResp.Passphrase) == 0 {
+		return "", fmt.Errorf("server returned empty passphrase, indicating an error occurred during attestation")
+	}
+
 	return string(proofResp.Passphrase), nil
 }
 

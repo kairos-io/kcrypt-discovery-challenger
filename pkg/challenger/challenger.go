@@ -17,7 +17,6 @@ import (
 	"github.com/google/go-attestation/attest"
 
 	keyserverv1alpha1 "github.com/kairos-io/kairos-challenger/api/v1alpha1"
-	"github.com/kairos-io/kairos-challenger/pkg/payload"
 
 	"github.com/kairos-io/kairos-challenger/controllers"
 	tpm "github.com/kairos-io/tpm-helpers"
@@ -359,20 +358,18 @@ func errorMessage(conn *websocket.Conn, logger logr.Logger, theErr error, descri
 	}
 	logger.Error(theErr, description)
 
-	writer, err := conn.NextWriter(websocket.BinaryMessage)
-	if err != nil {
-		logger.Error(err, "getting a writer from the connection")
+	// Send error as ProofResponse to maintain protocol consistency
+	// Empty passphrase with error message embedded
+	errorResp := tpm.ProofResponse{
+		Passphrase: []byte{}, // Empty passphrase indicates error
 	}
 
-	errMsg := theErr.Error()
-	err = json.NewEncoder(writer).Encode(payload.Data{Error: errMsg})
-	if err != nil {
-		logger.Error(err, "error encoding the response to json")
+	if err := conn.WriteJSON(errorResp); err != nil {
+		logger.Error(err, "Failed to send error response to client")
 	}
-	err = writer.Close()
-	if err != nil {
-		logger.Error(err, "closing the writer")
-	}
+
+	// Also close the connection to signal error condition
+	conn.Close()
 }
 
 func logRequestHandler(logger logr.Logger, h http.Handler) http.Handler {
