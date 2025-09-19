@@ -1,12 +1,15 @@
 package client
 
 import (
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"time"
 
+	"github.com/google/go-attestation/attest"
 	"github.com/gorilla/websocket"
 	"github.com/jaypipes/ghw/pkg/block"
 	"github.com/kairos-io/kairos-sdk/kcrypt/bus"
@@ -208,8 +211,42 @@ func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[st
 
 	defer conn.Close() //nolint:errcheck
 
-	// Protocol Step 1: Server sends challenge immediately upon connection (as per README)
-	// No need to send challenge request - server initiates
+	// Protocol Step 1: Send attestation data (EK + AK) to server so it can generate proper challenge
+	c.Logger.Debugf("Debug: Getting attestation data for challenge generation")
+	ek, akParams, err := akManager.GetAttestationData()
+	if err != nil {
+		return "", fmt.Errorf("getting attestation data: %w", err)
+	}
+	c.Logger.Debugf("Debug: Got EK and AK attestation data")
+
+	// Serialize EK to bytes using the existing encoding from tmp-helpers
+	ekPEM, err := encodeEKToBytes(ek)
+	if err != nil {
+		return "", fmt.Errorf("encoding EK to bytes: %w", err)
+	}
+
+	// Serialize AK parameters to JSON bytes
+	akBytes, err := json.Marshal(akParams)
+	if err != nil {
+		return "", fmt.Errorf("marshaling AK parameters: %w", err)
+	}
+
+	// Send attestation data to server as bytes
+	attestationData := struct {
+		EKBytes []byte `json:"ek_bytes"`
+		AKBytes []byte `json:"ak_bytes"`
+	}{
+		EKBytes: ekPEM,
+		AKBytes: akBytes,
+	}
+
+	c.Logger.Debugf("Debug: Sending attestation data to server")
+	if err := conn.WriteJSON(attestationData); err != nil {
+		return "", fmt.Errorf("sending attestation data: %w", err)
+	}
+	c.Logger.Debugf("Debug: Attestation data sent successfully")
+
+	// Protocol Step 2: Wait for challenge response from server
 	c.Logger.Debugf("Debug: Waiting for challenge from server")
 	var challengeResp tpm.AttestationChallengeResponse
 	if err := conn.ReadJSON(&challengeResp); err != nil {
@@ -217,7 +254,7 @@ func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[st
 	}
 	c.Logger.Debugf("Challenge received - Enrolled: %t", challengeResp.Enrolled)
 
-	// Protocol Step 2: Create proof request using AK Manager
+	// Protocol Step 3: Create proof request using AK Manager
 	c.Logger.Debugf("Debug: Creating proof request from challenge response")
 	proofReq, err := akManager.CreateProofRequest(&challengeResp)
 	if err != nil {
@@ -225,14 +262,14 @@ func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[st
 	}
 	c.Logger.Debugf("Debug: Proof request created successfully")
 
-	// Protocol Step 3: Send proof to server
+	// Protocol Step 4: Send proof to server
 	c.Logger.Debugf("Debug: Sending proof request to server")
 	if err := conn.WriteJSON(proofReq); err != nil {
 		return "", fmt.Errorf("sending proof request: %w", err)
 	}
 	c.Logger.Debugf("Proof request sent")
 
-	// Protocol Step 4: Receive passphrase from server
+	// Protocol Step 5: Receive passphrase from server
 	c.Logger.Debugf("Debug: Waiting for passphrase response")
 	var proofResp tpm.ProofResponse
 	if err := conn.ReadJSON(&proofResp); err != nil {
@@ -262,4 +299,27 @@ func (c *Client) decryptPassphrase(pass string) (string, error) {
 	passBytes, err := tpm.DecryptBlob(blob, opts...)
 
 	return string(passBytes), err
+}
+
+// encodeEKToBytes encodes an EK to PEM bytes for transmission
+func encodeEKToBytes(ek *attest.EK) ([]byte, error) {
+	if ek.Certificate != nil {
+		pemBlock := &pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: ek.Certificate.Raw,
+		}
+		return pem.EncodeToMemory(pemBlock), nil
+	}
+
+	// For EKs without certificates, marshal the public key
+	pubBytes, err := x509.MarshalPKIXPublicKey(ek.Public)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling EK public key: %w", err)
+	}
+
+	pemBlock := &pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: pubBytes,
+	}
+	return pem.EncodeToMemory(pemBlock), nil
 }

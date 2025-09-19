@@ -37,6 +37,38 @@ spec:
             properties:
               TPMHash:
                 type: string
+              attestation:
+                description: AttestationSpec defines TPM attestation data for TOFU
+                  enrollment and verification
+                properties:
+                  akPublicKey:
+                    description: AKPublicKey stores the Attestation Key public key
+                      in PEM format
+                    type: string
+                  ekPublicKey:
+                    description: EKPublicKey stores the Endorsement Key public key
+                      in PEM format
+                    type: string
+                  enrolledAt:
+                    description: EnrolledAt timestamp when this TPM was first enrolled
+                    format: date-time
+                    type: string
+                  lastVerifiedAt:
+                    description: LastVerifiedAt timestamp of the last successful attestation
+                    format: date-time
+                    type: string
+                  pcrValues:
+                    description: PCRValues stores the expected PCR values for boot
+                      state verification
+                    properties:
+                      pcr0:
+                        type: string
+                      pcr7:
+                        type: string
+                      pcr11:
+                        type: string
+                    type: object
+                type: object
               partitions:
                 items:
                   description: 'PartitionSpec defines a Partition. A partition can
