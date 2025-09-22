@@ -24,10 +24,12 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // PCRValues represents Platform Configuration Register values for boot state verification
+// Uses a flexible map where keys are PCR indices (as strings) and values are hex-encoded PCR values
 type PCRValues struct {
-	PCR0  string `json:"pcr0,omitempty"`  // BIOS/UEFI measurements
-	PCR7  string `json:"pcr7,omitempty"`  // Secure Boot state
-	PCR11 string `json:"pcr11,omitempty"` // UKI/kernel measurements
+	// PCRs is a flexible map of PCR index (as string) to PCR value (hex-encoded)
+	// Example: {"0": "a1b2c3...", "7": "d4e5f6...", "11": "g7h8i9..."}
+	// This allows for any combination of PCRs without hardcoding specific indices
+	PCRs map[string]string `json:"pcrs,omitempty"`
 }
 
 // AttestationSpec defines TPM attestation data for TOFU enrollment and verification
