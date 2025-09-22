@@ -21,7 +21,9 @@ import (
 	"github.com/kairos-io/kairos-challenger/controllers"
 	tpm "github.com/kairos-io/tpm-helpers"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -267,15 +269,14 @@ func encodeEKToPEM(ek *attest.EK) (string, error) {
 
 // encodeAKToPEM converts attestation parameters to PEM format for storage
 func encodeAKToPEM(akParams *attest.AttestationParameters) (string, error) {
-	// For AK, we store the public key part
-	data, err := pubBytesFromKey(akParams.Public)
-	if err != nil {
-		return "", err
-	}
+
+	// The akParams.Public contains raw TPMT_PUBLIC bytes from the TPM
+	// We store these raw bytes in PEM format for enrollment record keeping
+	// This enables TOFU verification and audit purposes using modern go-tpm v0.9.x API
 
 	pemBlock := &pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: data,
+		Type:  "TPM ATTESTATION KEY",
+		Bytes: akParams.Public,
 	}
 	return string(pem.EncodeToMemory(pemBlock)), nil
 }
@@ -287,6 +288,131 @@ func pubBytesFromKey(pub interface{}) ([]byte, error) {
 		return nil, fmt.Errorf("error marshaling public key: %v", err)
 	}
 	return data, nil
+}
+
+// verifyAKMatch compares the current AK public key with the enrolled one
+func verifyAKMatch(sealedVolume *keyserverv1alpha1.SealedVolume, currentAK *attest.AttestationParameters, logger logr.Logger) error {
+	// Get the stored AK from the SealedVolume's attestation spec
+	if sealedVolume.Spec.Attestation == nil {
+		return fmt.Errorf("no attestation data in SealedVolume for verification")
+	}
+
+	storedAKPEM := sealedVolume.Spec.Attestation.AKPublicKey
+	if storedAKPEM == "" {
+		return fmt.Errorf("no AK public key stored in SealedVolume for verification")
+	}
+
+	// Encode current AK to PEM for comparison
+	currentAKPEM, err := encodeAKToPEM(currentAK)
+	if err != nil {
+		return fmt.Errorf("encoding current AK to PEM: %w", err)
+	}
+
+	// Compare the PEM-encoded AK public keys
+	if storedAKPEM != currentAKPEM {
+		logger.Info("AK mismatch detected",
+			"storedAKLength", len(storedAKPEM),
+			"currentAKLength", len(currentAKPEM))
+		return fmt.Errorf("AK public key does not match enrolled key - potential TPM impersonation")
+	}
+
+	logger.Info("AK verification successful - matches enrolled key")
+	return nil
+}
+
+// verifyPCRMatch compares current PCR values with enrolled ones
+func verifyPCRMatch(sealedVolume *keyserverv1alpha1.SealedVolume, pcrQuote []byte, logger logr.Logger) error {
+	// Extract current PCR values from the quote
+	currentPCRs, err := extractPCRValues(pcrQuote)
+	if err != nil {
+		return fmt.Errorf("extracting current PCR values: %w", err)
+	}
+
+	// Get stored PCR values from SealedVolume's attestation spec
+	if sealedVolume.Spec.Attestation == nil || sealedVolume.Spec.Attestation.PCRValues == nil {
+		logger.Info("No PCR values stored during enrollment - skipping PCR verification")
+		return nil
+	}
+
+	storedPCRs := sealedVolume.Spec.Attestation.PCRValues
+
+	// Compare PCR values
+	if err := comparePCRValues(storedPCRs, currentPCRs, logger); err != nil {
+		return fmt.Errorf("PCR values changed since enrollment: %w", err)
+	}
+
+	logger.Info("PCR verification successful - boot state matches enrollment")
+	return nil
+}
+
+// comparePCRValues compares stored and current PCR values
+func comparePCRValues(stored, current *keyserverv1alpha1.PCRValues, logger logr.Logger) error {
+	// Count how many PCR values are actually stored and current
+	storedCount := countNonEmptyPCRs(stored)
+	currentCount := countNonEmptyPCRs(current)
+
+	logger.Info("PCR verification", "storedPCRs", storedCount, "currentPCRs", currentCount)
+
+	// Case 1: No PCRs stored during enrollment - expect consistency
+	if storedCount == 0 {
+		if currentCount > 0 {
+			logger.Info("PCR consistency violation - enrollment had no PCRs but current attestation provides PCRs")
+			return fmt.Errorf("enrollment had empty PCRs but current attestation has PCR values - inconsistent state")
+		}
+		logger.Info("PCR verification: both enrollment and current attestation have empty PCRs - consistent")
+		return nil
+	}
+
+	// Case 2: PCRs were stored during enrollment - strict verification required
+	if currentCount == 0 {
+		return fmt.Errorf("PCRs were stored during enrollment but none provided now - possible PCR extraction failure")
+	}
+
+	// Case 3: Compare actual PCR values using flexible PCR map
+	storedPCRs := stored.PCRs
+	currentPCRs := current.PCRs
+
+	if storedPCRs == nil {
+		storedPCRs = make(map[string]string)
+	}
+	if currentPCRs == nil {
+		currentPCRs = make(map[string]string)
+	}
+
+	// Compare each stored PCR against current PCRs
+	for pcrIndex, storedValue := range storedPCRs {
+		if storedValue == "" {
+			continue // Skip empty PCR values
+		}
+
+		currentValue, exists := currentPCRs[pcrIndex]
+		if !exists || currentValue == "" {
+			return fmt.Errorf("PCR%s was stored during enrollment but not provided now", pcrIndex)
+		}
+
+		if storedValue != currentValue {
+			logger.Info("PCR mismatch", "pcr", pcrIndex, "stored", storedValue, "current", currentValue)
+			return fmt.Errorf("PCR%s changed - boot state verification failed", pcrIndex)
+		}
+	}
+
+	logger.Info("PCR verification successful - all stored PCRs match current values")
+	return nil
+}
+
+// countNonEmptyPCRs counts how many PCR values are non-empty
+func countNonEmptyPCRs(pcrs *keyserverv1alpha1.PCRValues) int {
+	if pcrs == nil || pcrs.PCRs == nil {
+		return 0
+	}
+
+	count := 0
+	for _, value := range pcrs.PCRs {
+		if value != "" {
+			count++
+		}
+	}
+	return count
 }
 
 func Start(ctx context.Context, logger logr.Logger, kclient *kubernetes.Clientset, reconciler *controllers.SealedVolumeReconciler, namespace, address string) {
@@ -319,7 +445,7 @@ func Start(ctx context.Context, logger logr.Logger, kclient *kubernetes.Clientse
 	}()
 }
 
-func findVolumeFor(requestData PassphraseRequestData, volumeList *keyserverv1alpha1.SealedVolumeList) *SealedVolumeData {
+func findVolumeFor(requestData PassphraseRequestData, volumeList *keyserverv1alpha1.SealedVolumeList) (*SealedVolumeData, *keyserverv1alpha1.SealedVolume) {
 	for _, v := range volumeList.Items {
 		if requestData.TPMHash == v.Spec.TPMHash {
 			for _, p := range v.Spec.Partitions {
@@ -335,19 +461,20 @@ func findVolumeFor(requestData PassphraseRequestData, volumeList *keyserverv1alp
 					secretPath = p.Secret.Path
 				}
 				if labelMatches || uuidMatches || deviceNameMatches {
-					return &SealedVolumeData{
+					volumeData := &SealedVolumeData{
 						Quarantined:    v.Spec.Quarantined,
 						SecretName:     secretName,
 						SecretPath:     secretPath,
 						VolumeName:     v.Name,
 						PartitionLabel: p.Label,
 					}
+					return volumeData, &v
 				}
 			}
 		}
 	}
 
-	return nil
+	return nil, nil
 }
 
 // errorMessage should be used when an error should be both, printed to the stdout
@@ -465,8 +592,15 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 		return
 	}
 
-	existingVolume := findVolumeFor(requestData, volumeList)
+	existingVolume, existingSealedVolume := findVolumeFor(requestData, volumeList)
 	isNewEnrollment := existingVolume == nil
+
+	// Debug: Log the enrollment status and what we found
+	logger.Info("TOFU enrollment check",
+		"tpmHash", tpmHash,
+		"partitionLabel", partition.Label,
+		"isNewEnrollment", isNewEnrollment,
+		"foundVolumes", len(volumeList.Items))
 
 	// Protocol Step 3: Send challenge to client
 	// The challengeBytes contain a Challenge{EC: *attest.EncryptedCredential} structure
@@ -550,13 +684,6 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 	if isNewEnrollment {
 		logger.Info("Performing TOFU enrollment for new TPM")
 
-		// Generate secure passphrase for new enrollment
-		passphrase, err = generateTOFUPassphrase()
-		if err != nil {
-			errorMessage(conn, logger, fmt.Errorf("generating TOFU passphrase: %w", err), "Passphrase generation")
-			return
-		}
-
 		// Create secret name and path
 		volumeData := SealedVolumeData{
 			PartitionLabel: partition.Label,
@@ -564,9 +691,39 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 		}
 		secretName, secretPath := volumeData.DefaultSecret()
 
-		// Create Kubernetes secret
-		if err := createTOFUSecret(kclient, namespace, secretName, secretPath, passphrase); err != nil {
-			errorMessage(conn, logger, fmt.Errorf("creating TOFU secret: %w", err), "Secret creation")
+		logger.Info("TOFU secret details", "secretName", secretName, "secretPath", secretPath, "namespace", namespace)
+
+		// Check if secret already exists (orphaned from previous failed enrollment)
+		existingSecret := &corev1.Secret{}
+		err = reconciler.Get(context.TODO(), types.NamespacedName{Name: secretName, Namespace: namespace}, existingSecret)
+		if err == nil {
+			// Secret exists but no SealedVolume - this is an orphaned secret from previous failed enrollment
+			logger.Info("Found orphaned TOFU secret, reusing existing passphrase", "secretName", secretName)
+			passphraseBytes, exists := existingSecret.Data[secretPath]
+			if !exists {
+				errorMessage(conn, logger, fmt.Errorf("orphaned secret missing passphrase data at path: %s", secretPath), "Secret data missing")
+				return
+			}
+			passphrase = string(passphraseBytes)
+		} else if errors.IsNotFound(err) {
+			// Secret doesn't exist, create new one
+			logger.Info("Creating new TOFU secret", "secretName", secretName)
+
+			// Generate secure passphrase for new enrollment
+			passphrase, err = generateTOFUPassphrase()
+			if err != nil {
+				errorMessage(conn, logger, fmt.Errorf("generating TOFU passphrase: %w", err), "Passphrase generation")
+				return
+			}
+
+			// Create Kubernetes secret
+			if err := createTOFUSecret(kclient, namespace, secretName, secretPath, passphrase); err != nil {
+				errorMessage(conn, logger, fmt.Errorf("creating TOFU secret: %w", err), "Secret creation")
+				return
+			}
+		} else {
+			// Some other error occurred
+			errorMessage(conn, logger, fmt.Errorf("checking for existing secret: %w", err), "Secret lookup")
 			return
 		}
 
@@ -575,7 +732,7 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 		if len(proofReq.PCRQuote) > 0 {
 			if extractedPCRs, err := extractPCRValues(proofReq.PCRQuote); err == nil {
 				pcrValues = extractedPCRs
-				logger.Info("Storing PCR values for future verification", "pcr0", pcrValues.PCR0, "pcr7", pcrValues.PCR7, "pcr11", pcrValues.PCR11)
+				logger.Info("Storing PCR values for future verification", "pcrCount", len(pcrValues.PCRs), "pcrs", pcrValues.PCRs)
 			} else {
 				logger.Error(err, "Failed to extract PCR values during enrollment")
 			}
@@ -595,6 +752,30 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 			errorMessage(conn, logger, fmt.Errorf("TPM is quarantined"), "TPM quarantined")
 			return
 		}
+
+		// SECURITY: Verify AK public key matches the enrolled one
+		if err := verifyAKMatch(existingSealedVolume, &akParams, logger); err != nil {
+			logger.Error(err, "AK verification failed - potential TPM impersonation attempt")
+			errorMessage(conn, logger, fmt.Errorf("AK verification failed: %w", err), "AK verification")
+			return
+		}
+
+		// SECURITY: Verify PCR values match the enrolled ones (boot state verification)
+		if len(proofReq.PCRQuote) > 0 {
+			if err := verifyPCRMatch(existingSealedVolume, proofReq.PCRQuote, logger); err != nil {
+				logger.Error(err, "PCR verification failed - boot state changed")
+				// Quarantine the TPM instead of rejecting completely
+				if quarantineErr := quarantineSealedVolume(reconciler, namespace, tpmHash, logger); quarantineErr != nil {
+					logger.Error(quarantineErr, "Failed to quarantine TPM after PCR mismatch")
+				}
+				errorMessage(conn, logger, fmt.Errorf("PCR verification failed: %w", err), "PCR verification")
+				return
+			}
+		} else {
+			logger.Info("No PCR quote provided - skipping boot state verification")
+		}
+
+		logger.Info("TPM verification successful - same AK and boot state as enrollment")
 
 		// Get existing passphrase from Kubernetes secret
 		secretName, secretPath := existingVolume.DefaultSecret()
@@ -636,45 +817,94 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 func updateLastVerificationTimestamp(reconciler *controllers.SealedVolumeReconciler, namespace, tpmHash string) error {
 	// This would need to be implemented in the reconciler to update the LastVerifiedAt field
 	// For now, we'll log that it should be updated
-	// TODO: Implement reconciler method to update timestamps
+	// NOTE: Reconciler method to update verification timestamps needs implementation
 	return nil
 }
 
 // extractPCRValues extracts PCR values from a TPM quote for verification
 func extractPCRValues(quote []byte) (*keyserverv1alpha1.PCRValues, error) {
-	// TODO: Implement PCR extraction from the TPM quote
-	// This requires parsing the quote structure to get the actual PCR values
-	// For now, return empty PCR values as a placeholder
-	return &keyserverv1alpha1.PCRValues{
-		PCR0:  "", // Will be extracted from quote
-		PCR7:  "", // Will be extracted from quote
-		PCR11: "", // Will be extracted from quote
-	}, nil
+	if len(quote) == 0 {
+		return &keyserverv1alpha1.PCRValues{}, nil
+	}
+
+	// Parse the quote format from tmp-helpers with flexible PCR selection
+	var quoteData struct {
+		Quote struct {
+			Version   string `json:"version"`
+			Quote     []byte `json:"quote"`
+			Signature []byte `json:"signature"`
+		} `json:"quote"`
+		PCRs     map[int][]byte `json:"pcrs"`
+		Selected []int          `json:"selected_pcrs"`
+	}
+
+	if err := json.Unmarshal(quote, &quoteData); err != nil {
+		return nil, fmt.Errorf("unmarshaling quote data: %w", err)
+	}
+
+	// Extract PCRs from the flexible map
+	pcrValues := &keyserverv1alpha1.PCRValues{
+		PCRs: make(map[string]string),
+	}
+
+	if quoteData.PCRs != nil {
+		// Populate the flexible PCRs map
+		for pcrIndex, pcrValue := range quoteData.PCRs {
+			if len(pcrValue) > 0 {
+				pcrValues.PCRs[fmt.Sprintf("%d", pcrIndex)] = fmt.Sprintf("%x", pcrValue)
+			}
+		}
+	}
+
+	// Validate that the quote contains valid PCR indices
+	for _, pcr := range quoteData.Selected {
+		if pcr < 0 || pcr > 23 {
+			return nil, fmt.Errorf("invalid PCR index %d in quote (valid range: 0-23)", pcr)
+		}
+	}
+
+	return pcrValues, nil
+}
+
+// equalIntSlices compares two int slices for equality
+func equalIntSlices(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, v := range a {
+		if v != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // verifyPCRValues compares current PCR values against stored expected values
 func verifyPCRValues(current, expected *keyserverv1alpha1.PCRValues, logger logr.Logger) error {
-	if expected == nil {
+	if expected == nil || expected.PCRs == nil {
 		// No expected values stored (first-time enrollment), accept any values
 		logger.Info("No expected PCR values stored, accepting current values")
 		return nil
 	}
 
-	if current == nil {
+	if current == nil || current.PCRs == nil {
 		return fmt.Errorf("no current PCR values provided")
 	}
 
-	// Compare each PCR value (only if expected value is set)
-	if expected.PCR0 != "" && current.PCR0 != expected.PCR0 {
-		return fmt.Errorf("PCR0 mismatch: expected %s, got %s", expected.PCR0, current.PCR0)
-	}
+	// Compare each expected PCR value
+	for pcrIndex, expectedValue := range expected.PCRs {
+		if expectedValue == "" {
+			continue // Skip empty expected values
+		}
 
-	if expected.PCR7 != "" && current.PCR7 != expected.PCR7 {
-		return fmt.Errorf("PCR7 mismatch: expected %s, got %s", expected.PCR7, current.PCR7)
-	}
+		currentValue, exists := current.PCRs[pcrIndex]
+		if !exists || currentValue == "" {
+			return fmt.Errorf("PCR%s mismatch: expected %s, but not provided in current values", pcrIndex, expectedValue)
+		}
 
-	if expected.PCR11 != "" && current.PCR11 != expected.PCR11 {
-		return fmt.Errorf("PCR11 mismatch: expected %s, got %s", expected.PCR11, current.PCR11)
+		if expectedValue != currentValue {
+			return fmt.Errorf("PCR%s mismatch: expected %s, got %s", pcrIndex, expectedValue, currentValue)
+		}
 	}
 
 	logger.Info("PCR verification successful")

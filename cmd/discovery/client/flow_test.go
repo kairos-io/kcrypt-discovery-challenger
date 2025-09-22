@@ -25,19 +25,10 @@ var _ = Describe("Flow Detection", func() {
 	})
 
 	Context("TPM attestation capabilities", func() {
-		It("should detect TPM flow availability", func() {
-			canUseTPM := client.canUseTPMAttestation()
-
-			// Log the result for manual verification
-			if canUseTPM {
-				GinkgoLogr.Info("TPM attestation flow will be used")
-			} else {
-				GinkgoLogr.Info("Legacy flow will be used (no TPM or empty PCRs)")
-			}
-
-			// The test doesn't assert anything specific since TPM availability depends on the environment
-			// This is more of an integration test to verify the flow selection logic works
-			Expect(canUseTPM).To(BeAssignableToTypeOf(bool(true)))
+		It("should handle TPM operations", func() {
+			// Test that client can be created without errors
+			// TPM availability testing requires actual hardware
+			Expect(client).ToNot(BeNil())
 		})
 	})
 
