@@ -61,12 +61,14 @@ spec:
                     description: PCRValues stores the expected PCR values for boot
                       state verification
                     properties:
-                      pcr0:
-                        type: string
-                      pcr7:
-                        type: string
-                      pcr11:
-                        type: string
+                      pcrs:
+                        additionalProperties:
+                          type: string
+                        description: 'PCRs is a flexible map of PCR index (as string)
+                          to PCR value (hex-encoded) Example: {"0": "a1b2c3...", "7":
+                          "d4e5f6...", "11": "g7h8i9..."} This allows for any combination
+                          of PCRs without hardcoding specific indices'
+                        type: object
                     type: object
                 type: object
               partitions:
