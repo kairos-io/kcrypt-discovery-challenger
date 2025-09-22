@@ -71,6 +71,12 @@ func (s SealedVolumeData) DefaultSecret() (string, string) {
 	return cleanKubeName(secretName), cleanKubeName(secretPath)
 }
 
+// isConnectionClosed checks if the error is about an already closed connection
+func isConnectionClosed(err error) bool {
+	return strings.Contains(err.Error(), "use of closed network connection") ||
+		strings.Contains(err.Error(), "connection closed")
+}
+
 func writeRead(conn *websocket.Conn, input []byte) ([]byte, error) {
 	writer, err := conn.NextWriter(websocket.BinaryMessage)
 	if err != nil {
@@ -531,7 +537,10 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 	defer func() {
 		err := conn.Close()
 		if err != nil {
-			logger.Error(err, "closing the connection")
+			// Don't log "use of closed network connection" as an error since we might have already closed it
+			if !isConnectionClosed(err) {
+				logger.Error(err, "closing the connection")
+			}
 		}
 	}()
 
@@ -673,7 +682,7 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 					logger.Error(err, "Failed to get SealedVolume for PCR verification")
 				} else if actualVolume != nil && actualVolume.Spec.Attestation != nil {
 					if err := verifyPCRValues(currentPCRs, actualVolume.Spec.Attestation.PCRValues, logger); err != nil {
-						logger.Error(err, "PCR verification failed - quarantining TPM")
+						logger.Info("PCR verification failed - quarantining TPM", "details", err.Error())
 
 						// Quarantine the TPM due to PCR mismatch
 						if qErr := quarantineSealedVolume(reconciler, namespace, tpmHash, logger); qErr != nil {
@@ -767,7 +776,7 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 
 		// SECURITY: Verify AK public key matches the enrolled one
 		if err := verifyAKMatch(existingSealedVolume, &akParams, logger); err != nil {
-			logger.Error(err, "AK verification failed - potential TPM impersonation attempt")
+			logger.Info("AK verification failed - potential TPM impersonation attempt", "details", err.Error())
 			securityRejection(conn, logger, "AK verification failed", "Attestation Key does not match enrolled key - potential TPM impersonation")
 			return
 		}
@@ -775,7 +784,7 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 		// SECURITY: Verify PCR values match the enrolled ones (boot state verification)
 		if len(proofReq.PCRQuote) > 0 {
 			if err := verifyPCRMatch(existingSealedVolume, proofReq.PCRQuote, logger); err != nil {
-				logger.Error(err, "PCR verification failed - boot state changed")
+				logger.Info("PCR verification failed - boot state changed", "details", err.Error())
 				// Quarantine the TPM instead of rejecting completely
 				if quarantineErr := quarantineSealedVolume(reconciler, namespace, tpmHash, logger); quarantineErr != nil {
 					logger.Error(quarantineErr, "Failed to quarantine TPM after PCR mismatch")
