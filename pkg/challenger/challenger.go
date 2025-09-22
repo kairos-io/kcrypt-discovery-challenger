@@ -485,6 +485,18 @@ func errorMessage(conn *websocket.Conn, logger logr.Logger, theErr error, descri
 	}
 	logger.Error(theErr, description)
 
+	sendErrorResponse(conn, logger)
+}
+
+// securityRejection should be used for security-related rejections (PCR mismatches, quarantine, etc.)
+// These are logged as INFO since they're expected security behavior, not application errors
+func securityRejection(conn *websocket.Conn, logger logr.Logger, reason string, details string) {
+	logger.Info("Security verification failed - rejecting attestation", "reason", reason, "details", details)
+	sendErrorResponse(conn, logger)
+}
+
+// sendErrorResponse sends an error response to the client and closes the connection
+func sendErrorResponse(conn *websocket.Conn, logger logr.Logger) {
 	// Send error as ProofResponse to maintain protocol consistency
 	// Empty passphrase with error message embedded
 	errorResp := tpm.ProofResponse{
@@ -668,7 +680,7 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 							logger.Error(qErr, "Failed to quarantine SealedVolume")
 						}
 
-						errorMessage(conn, logger, fmt.Errorf("PCR verification failed: %w", err), "PCR verification")
+						securityRejection(conn, logger, "PCR verification failed", err.Error())
 						return
 					}
 				}
@@ -749,14 +761,14 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 		logger.Info("Retrieving passphrase for known TPM")
 
 		if existingVolume.Quarantined {
-			errorMessage(conn, logger, fmt.Errorf("TPM is quarantined"), "TPM quarantined")
+			securityRejection(conn, logger, "TPM quarantined", "TPM has been quarantined due to previous security violations")
 			return
 		}
 
 		// SECURITY: Verify AK public key matches the enrolled one
 		if err := verifyAKMatch(existingSealedVolume, &akParams, logger); err != nil {
 			logger.Error(err, "AK verification failed - potential TPM impersonation attempt")
-			errorMessage(conn, logger, fmt.Errorf("AK verification failed: %w", err), "AK verification")
+			securityRejection(conn, logger, "AK verification failed", "Attestation Key does not match enrolled key - potential TPM impersonation")
 			return
 		}
 
@@ -768,7 +780,7 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 				if quarantineErr := quarantineSealedVolume(reconciler, namespace, tpmHash, logger); quarantineErr != nil {
 					logger.Error(quarantineErr, "Failed to quarantine TPM after PCR mismatch")
 				}
-				errorMessage(conn, logger, fmt.Errorf("PCR verification failed: %w", err), "PCR verification")
+				securityRejection(conn, logger, "PCR verification failed", err.Error())
 				return
 			}
 		} else {
