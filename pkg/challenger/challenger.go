@@ -855,8 +855,7 @@ func extractPCRValues(quote []byte) (*keyserverv1alpha1.PCRValues, error) {
 			Quote     []byte `json:"quote"`
 			Signature []byte `json:"signature"`
 		} `json:"quote"`
-		PCRs     map[int][]byte `json:"pcrs"`
-		Selected []int          `json:"selected_pcrs"`
+		PCRs map[int][]byte `json:"pcrs"`
 	}
 
 	if err := json.Unmarshal(quote, &quoteData); err != nil {
@@ -878,9 +877,9 @@ func extractPCRValues(quote []byte) (*keyserverv1alpha1.PCRValues, error) {
 	}
 
 	// Validate that the quote contains valid PCR indices
-	for _, pcr := range quoteData.Selected {
-		if pcr < 0 || pcr > 23 {
-			return nil, fmt.Errorf("invalid PCR index %d in quote (valid range: 0-23)", pcr)
+	for pcrIndex := range quoteData.PCRs {
+		if pcrIndex < 0 || pcrIndex > 23 {
+			return nil, fmt.Errorf("invalid PCR index %d in quote (valid range: 0-23)", pcrIndex)
 		}
 	}
 
