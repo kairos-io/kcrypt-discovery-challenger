@@ -47,10 +47,10 @@ var _ = Describe("Flow Detection", func() {
 
 	Context("Flow routing", func() {
 		It("should call the appropriate flow based on TPM availability", func() {
-			// This test verifies that waitPass correctly routes to either TPM or legacy flow
+			// This test verifies that GetPassphrase correctly routes to either TPM or legacy flow
 			// Since we don't have a real server, we expect an error, but the routing logic should work
 
-			_, err := client.waitPass(&block.Partition{
+			_, err := client.GetPassphrase(&block.Partition{
 				Name:            "test-partition",
 				UUID:            "test-uuid",
 				FilesystemLabel: "test-label",
