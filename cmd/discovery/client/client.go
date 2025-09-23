@@ -16,6 +16,8 @@ import (
 	"github.com/kairos-io/kairos-sdk/types"
 	"github.com/kairos-io/tpm-helpers"
 	"github.com/mudler/go-pluggable"
+
+	"github.com/kairos-io/kairos-challenger/pkg/constants"
 )
 
 // Because of how go-pluggable works, we can't just print to stdout
@@ -97,7 +99,6 @@ func (c *Client) GetPassphrase(partition *block.Partition, attempts int) (string
 		}
 	}
 
-	// Only TPM attestation flow is supported in the new architecture
 	c.Logger.Debugf("Starting TPM attestation flow with server: %s", serverURL)
 	return c.waitPassWithTPMAttestation(serverURL, additionalHeaders, partition, attempts)
 }
@@ -111,8 +112,8 @@ func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders 
 		c.Logger.Debugf("Debug: TPM attestation attempt %d/%d", tries+1, attempts)
 
 		// Step 1: Initialize AK Manager
-		c.Logger.Debugf("Debug: Initializing AK Manager with handle file: /etc/kairos/ak.blob")
-		akManager, err := tpm.NewAKManager(tpm.WithAKHandleFile("/etc/kairos/ak.blob"))
+		c.Logger.Debugf("Debug: Initializing AK Manager with handle file: %s", constants.AKBlobFile)
+		akManager, err := tpm.NewAKManager(tpm.WithAKHandleFile(constants.AKBlobFile))
 		if err != nil {
 			c.Logger.Debugf("Failed to create AK manager: %v", err)
 			time.Sleep(TPMRetryDelay)
