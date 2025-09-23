@@ -43,12 +43,6 @@ func NewClientWithLogger(logger types.KairosLogger) (*Client, error) {
 	return &Client{Config: conf, Logger: logger}, nil
 }
 
-// ❯ echo '{ "data": "{ \\"label\\": \\"LABEL\\" }"}' | sudo -E WSS_SERVER="http://localhost:8082/challenge" ./challenger "discovery.password"
-// GetPassphrase retrieves a passphrase for the given partition - core business logic
-func (c *Client) GetPassphrase(partition *block.Partition, attempts int) (string, error) {
-	return c.waitPass(partition, attempts)
-}
-
 func (c *Client) Start() error {
 	if err := os.RemoveAll(LOGFILE); err != nil { // Start fresh
 		return fmt.Errorf("removing the logfile: %w", err)
@@ -84,7 +78,9 @@ func (c *Client) Start() error {
 	return factory.Run(pluggable.EventType(os.Args[1]), os.Stdin, os.Stdout)
 }
 
-func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err error) {
+// ❯ echo '{ "data": "{ \\"label\\": \\"LABEL\\" }"}' | sudo -E WSS_SERVER="http://localhost:8082/challenge" ./challenger "discovery.password"
+// GetPassphrase retrieves a passphrase for the given partition - core business logic
+func (c *Client) GetPassphrase(partition *block.Partition, attempts int) (string, error) {
 	serverURL := c.Config.Kcrypt.Challenger.Server
 
 	// If we don't have any server configured, just do local
@@ -93,6 +89,7 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 	}
 
 	additionalHeaders := map[string]string{}
+	var err error
 	if c.Config.Kcrypt.Challenger.MDNS {
 		serverURL, additionalHeaders, err = queryMDNS(serverURL, c.Logger)
 		if err != nil {
@@ -102,7 +99,7 @@ func (c *Client) waitPass(p *block.Partition, attempts int) (pass string, err er
 
 	// Only TPM attestation flow is supported in the new architecture
 	c.Logger.Debugf("Starting TPM attestation flow with server: %s", serverURL)
-	return c.waitPassWithTPMAttestation(serverURL, additionalHeaders, p, attempts)
+	return c.waitPassWithTPMAttestation(serverURL, additionalHeaders, partition, attempts)
 }
 
 // waitPassWithTPMAttestation implements the new TPM remote attestation flow over WebSocket
