@@ -65,6 +65,33 @@ This is the Kairos kcrypt-challenger Kubernetes Native Extension.
 
 See the documentation in our website: https://kairos.io/docs/advanced/partition_encryption/.
 
+### TPM NV Memory Cleanup
+
+⚠️ **DANGER**: This command removes encryption passphrases from TPM memory!
+⚠️ **If you delete the wrong index, your encrypted disk may become UNBOOTABLE!**
+
+During development and testing, the kcrypt-challenger may store passphrases in TPM non-volatile (NV) memory. These passphrases persist across reboots and can accumulate over time, taking up space in the TPM.
+
+To clean up TPM NV memory used by the challenger:
+
+```bash
+# Clean up the default NV index (respects config or defaults to 0x1500000)
+kcrypt-discovery-challenger cleanup
+
+# Clean up a specific NV index
+kcrypt-discovery-challenger cleanup --nv-index=0x1500001
+
+# Clean up with specific TPM device
+kcrypt-discovery-challenger cleanup --tpm-device=/dev/tpmrm0
+```
+
+**Safety Features:**
+- By default, the command shows warnings and prompts for confirmation
+- You must type "yes" to proceed with deletion
+- Use `--i-know-what-i-am-doing` flag to skip the prompt (not recommended)
+
+**Note**: This command uses native Go TPM libraries and requires appropriate permissions to access the TPM device.
+
 ## Installation
 
 To install, use helm:

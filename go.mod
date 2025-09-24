@@ -2,7 +2,8 @@ module github.com/kairos-io/kairos-challenger
 
 go 1.25
 
-replace github.com/kairos-io/tpm-helpers => github.com/kairos-io/tpm-helpers v0.0.0-20250924070049-3fc80287ea6d
+replace github.com/kairos-io/tpm-helpers => github.com/kairos-io/tpm-helpers v0.0.0-20250924104130-49f51e390ef3
+//replace github.com/kairos-io/tpm-helpers => /home/dimitris/workspace/kairos/tpm-helpers
 
 require (
 	github.com/go-logr/logr v1.4.3
@@ -19,6 +20,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.27.1
 	github.com/onsi/gomega v1.38.2
 	github.com/spectrocloud/peg v0.0.0-20240405075800-c5da7125e30f
+	github.com/spf13/cobra v1.10.1
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.27.2
 	k8s.io/apimachinery v0.27.4
@@ -80,6 +82,7 @@ require (
 	github.com/google/certificate-transparency-go v1.1.4 // indirect
 	github.com/google/gnostic v0.5.7-v3refs // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/google/go-configfs-tsm v0.3.3 // indirect
 	github.com/google/go-containerregistry v0.20.6 // indirect
 	github.com/google/go-tpm v0.9.1 // indirect
 	github.com/google/go-tpm-tools v0.4.4 // indirect
@@ -138,7 +141,6 @@ require (
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sirupsen/logrus v1.9.4-0.20250804143300-cb253f3080f1 // indirect
 	github.com/spf13/cast v1.7.1 // indirect
-	github.com/spf13/cobra v1.10.1 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
