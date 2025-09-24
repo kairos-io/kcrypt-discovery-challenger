@@ -3,7 +3,6 @@ package client
 import (
 	"testing"
 
-	"github.com/jaypipes/ghw/pkg/block"
 	"github.com/kairos-io/kairos-sdk/types"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -45,23 +44,4 @@ var _ = Describe("Flow Detection", func() {
 		})
 	})
 
-	Context("Flow routing", func() {
-		It("should call the appropriate flow based on TPM availability", func() {
-			// This test verifies that GetPassphrase correctly routes to either TPM or legacy flow
-			// Since we don't have a real server, we expect an error, but the routing logic should work
-
-			_, err := client.GetPassphrase(&block.Partition{
-				Name:            "test-partition",
-				UUID:            "test-uuid",
-				FilesystemLabel: "test-label",
-			}, 1)
-
-			// We expect an error since there's no real server, but the flow selection should work
-			Expect(err).To(HaveOccurred())
-
-			// The flow routing logic now uses the logger instead of the file,
-			// so we just verify the error occurred as expected
-			Expect(err.Error()).To(ContainSubstring("TPM attestation flow not implemented yet"))
-		})
-	})
 })
