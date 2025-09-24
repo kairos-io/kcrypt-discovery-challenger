@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -60,11 +61,62 @@ Configuration:
   # Get passphrase for encrypted partition
   kcrypt-discovery-challenger get --partition-name=/dev/sda2
 
+  # Clean up TPM NV memory (useful for development)
+  kcrypt-discovery-challenger cleanup
+
   # Run plugin event
   kcrypt-discovery-challenger discovery.password`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runTPMHash()
 	},
+}
+
+// newCleanupCmd creates the cleanup command
+func newCleanupCmd() *cobra.Command {
+	var nvIndex string
+	var tpmDevice string
+	var skipConfirmation bool
+
+	cmd := &cobra.Command{
+		Use:   "cleanup",
+		Short: "Clean up TPM NV memory",
+		Long: `Clean up TPM NV memory by undefining specific NV indices.
+
+⚠️  DANGER: This command removes encryption passphrases from TPM memory!
+⚠️  If you delete the wrong index, your encrypted disk may become UNBOOTABLE!
+
+This command helps clean up TPM NV memory used by the local pass flow,
+which stores encrypted passphrases in TPM non-volatile memory. Without
+cleanup, these passphrases persist indefinitely and take up space.
+
+The command will prompt for confirmation before deletion unless you use
+the --i-know-what-i-am-doing flag to skip the safety prompt.
+
+Default behavior:
+- Uses the same NV index as the local pass flow (from config or 0x1500000)
+- Uses the same TPM device as configured (or system default if none specified)
+- Prompts for confirmation with safety warnings`,
+		Example: `  # Clean up default NV index (with confirmation prompt)
+  kcrypt-discovery-challenger cleanup
+
+  # Clean up specific NV index
+  kcrypt-discovery-challenger cleanup --nv-index=0x1500001
+
+  # Clean up with specific TPM device
+  kcrypt-discovery-challenger cleanup --tpm-device=/dev/tpmrm0
+
+  # Skip confirmation prompt (DANGEROUS!)
+  kcrypt-discovery-challenger cleanup --i-know-what-i-am-doing`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCleanup(nvIndex, tpmDevice, skipConfirmation)
+		},
+	}
+
+	cmd.Flags().StringVar(&nvIndex, "nv-index", "", fmt.Sprintf("NV index to clean up (defaults to configured index or %s)", client.DefaultNVIndex))
+	cmd.Flags().StringVar(&tpmDevice, "tpm-device", "", "TPM device path (defaults to configured device or system default)")
+	cmd.Flags().BoolVar(&skipConfirmation, "i-know-what-i-am-doing", false, "Skip confirmation prompt (DANGEROUS: may make encrypted disks unbootable)")
+
+	return cmd
 }
 
 // newGetCmd creates the get command with its flags
@@ -145,6 +197,7 @@ func init() {
 
 	// Add subcommands
 	rootCmd.AddCommand(newGetCmd())
+	rootCmd.AddCommand(newCleanupCmd())
 	rootCmd.AddCommand(pluginCmd)
 }
 
@@ -311,6 +364,96 @@ func createClientWithOverrides(serverURL string, enableMDNS bool, certificate st
 	logger.Debugf("  Certificate: %s", maskSensitiveString(c.Config.Kcrypt.Challenger.Certificate))
 
 	return c, nil
+}
+
+// runCleanup handles the cleanup subcommand - TPM NV memory cleanup
+func runCleanup(nvIndex, tpmDevice string, skipConfirmation bool) error {
+	// Create logger based on debug flag
+	var logger types.KairosLogger
+	if debug {
+		logger = types.NewKairosLogger("kcrypt-discovery-challenger", "debug", false)
+		logger.Debugf("Debug mode enabled for TPM NV cleanup")
+	} else {
+		logger = types.NewKairosLogger("kcrypt-discovery-challenger", "error", false)
+	}
+
+	// Load configuration to get defaults if flags not provided
+	var config client.Config
+	c, err := client.NewClientWithLogger(logger)
+	if err != nil {
+		logger.Debugf("Warning: Could not load configuration: %v", err)
+		// Continue with defaults - not a fatal error
+	} else {
+		config = c.Config
+	}
+
+	// Determine NV index to clean up (follow same pattern as localPass/genAndStore)
+	targetIndex := nvIndex
+	if targetIndex == "" {
+		// First check config, then fall back to the same default used by the local pass flow
+		if config.Kcrypt.Challenger.NVIndex != "" {
+			targetIndex = config.Kcrypt.Challenger.NVIndex
+		} else {
+			targetIndex = client.DefaultNVIndex
+		}
+	}
+
+	// Determine TPM device
+	targetDevice := tpmDevice
+	if targetDevice == "" && config.Kcrypt.Challenger.TPMDevice != "" {
+		targetDevice = config.Kcrypt.Challenger.TPMDevice
+	}
+
+	logger.Debugf("Cleaning up TPM NV index: %s", targetIndex)
+	if targetDevice != "" {
+		logger.Debugf("Using TPM device: %s", targetDevice)
+	}
+
+	// Check if the NV index exists first
+	opts := []tpm.TPMOption{tpm.WithIndex(targetIndex)}
+	if targetDevice != "" {
+		opts = append(opts, tpm.WithDevice(targetDevice))
+	}
+
+	// Try to read from the index to see if it exists
+	logger.Debugf("Checking if NV index %s exists", targetIndex)
+	_, err = tpm.ReadBlob(opts...)
+	if err != nil {
+		// If we can't read it, it might not exist or be empty
+		logger.Debugf("NV index %s appears to be empty or non-existent: %v", targetIndex, err)
+		fmt.Printf("NV index %s appears to be empty or does not exist\n", targetIndex)
+		return nil
+	}
+
+	// Confirmation prompt with warning
+	if !skipConfirmation {
+		fmt.Printf("\n⚠️  WARNING: You are about to delete TPM NV index %s\n", targetIndex)
+		fmt.Printf("⚠️  If this index contains your disk encryption passphrase, your encrypted disk will become UNBOOTABLE!\n")
+		fmt.Printf("⚠️  This action CANNOT be undone.\n\n")
+		fmt.Printf("Are you sure you want to continue? (type 'yes' to confirm): ")
+
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Scan()
+		response := strings.TrimSpace(strings.ToLower(scanner.Text()))
+
+		if response != "yes" {
+			fmt.Printf("Cleanup cancelled.\n")
+			return nil
+		}
+	}
+
+	// Use native Go TPM library to undefine the NV space
+	logger.Debugf("Using native TPM library to undefine NV index")
+	fmt.Printf("Cleaning up TPM NV index %s...\n", targetIndex)
+
+	err = tpm.UndefineBlob(opts...)
+	if err != nil {
+		return fmt.Errorf("failed to undefine NV index %s: %w", targetIndex, err)
+	}
+
+	fmt.Printf("Successfully cleaned up NV index %s\n", targetIndex)
+	logger.Debugf("Successfully undefined NV index %s", targetIndex)
+	return nil
 }
 
 // maskSensitiveString masks certificate paths/content for logging
