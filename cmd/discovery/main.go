@@ -207,6 +207,15 @@ func main() {
 	}
 }
 
+// ExecuteWithArgs executes the root command with the given arguments.
+// This function is used by tests to simulate CLI execution.
+func ExecuteWithArgs(args []string) error {
+	// Set command arguments (this overrides os.Args)
+	rootCmd.SetArgs(args)
+
+	return rootCmd.Execute()
+}
+
 // runTPMHash handles the root command - TPM hash generation
 func runTPMHash() error {
 	// Create logger based on debug flag

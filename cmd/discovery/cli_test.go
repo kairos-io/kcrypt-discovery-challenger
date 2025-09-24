@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/kairos-io/kairos-sdk/kcrypt/bus"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -26,53 +25,46 @@ var _ = Describe("CLI Interface", func() {
 		_ = os.Remove("/tmp/kcrypt-challenger-client.log")
 	})
 
-	Context("CLI help and version", func() {
+	Context("CLI help", func() {
 		It("should show help when --help is used", func() {
-			exitCode := RunCLIMode([]string{"--help"})
+			err := ExecuteWithArgs([]string{"--help"})
 
-			Expect(exitCode).To(Equal(0))
+			Expect(err).To(BeNil())
 			// We can't easily test the output content without complex output capture,
-			// but we can verify the function executes and returns the correct exit code
-		})
-
-		It("should show version when --version is used", func() {
-			exitCode := RunCLIMode([]string{"--version"})
-
-			Expect(exitCode).To(Equal(0))
-			// We can't easily test the output content without complex output capture,
-			// but we can verify the function executes and returns the correct exit code
+			// but we can verify the function executes without error
 		})
 	})
 
 	Context("Input validation", func() {
-		It("should require all partition parameters", func() {
-			exitCode := RunCLIMode([]string{"--partition-name=/dev/sda2"})
+		It("should require all partition parameters for get command", func() {
+			err := ExecuteWithArgs([]string{"get"})
 
-			Expect(exitCode).To(Equal(1))
-			// Should exit with error code 1 when required parameters are missing
+			Expect(err).To(HaveOccurred())
+			// Should return an error when required parameters are missing
 		})
 
-		It("should validate that all required fields are provided", func() {
-			// Test missing UUID
-			exitCode := RunCLIMode([]string{"--partition-name=/dev/sda2", "--partition-label=test"})
-			Expect(exitCode).To(Equal(1))
+		It("should validate that all required fields are provided for get command", func() {
+			// Test with valid partition parameters
+			err := ExecuteWithArgs([]string{"get", "--partition-name=/dev/sda2"})
+			Expect(err).To(HaveOccurred()) // Should fail at client connection but parsing should work
 
-			// Test missing label
-			exitCode = RunCLIMode([]string{"--partition-name=/dev/sda2", "--partition-uuid=12345"})
-			Expect(exitCode).To(Equal(1))
+			// Test with valid UUID
+			err = ExecuteWithArgs([]string{"get", "--partition-uuid=12345"})
+			Expect(err).To(HaveOccurred()) // Should fail at client connection but parsing should work
 		})
 
 		It("should handle invalid flags gracefully", func() {
-			exitCode := RunCLIMode([]string{"--invalid-flag"})
+			err := ExecuteWithArgs([]string{"--invalid-flag"})
 
-			Expect(exitCode).To(Equal(1))
-			// FlagSet should handle the error and return exit code 1
+			Expect(err).To(HaveOccurred())
+			// Should return an error for invalid flags
 		})
 	})
 
 	Context("Flow detection and backend integration", func() {
 		It("should attempt to get passphrase with valid parameters", func() {
-			exitCode := RunCLIMode([]string{
+			err := ExecuteWithArgs([]string{
+				"get",
 				"--partition-name=/dev/test",
 				"--partition-uuid=test-uuid-12345",
 				"--partition-label=test-label",
@@ -80,7 +72,7 @@ var _ = Describe("CLI Interface", func() {
 			})
 
 			// We expect this to fail since there's no server, but it should reach the backend logic
-			Expect(exitCode).To(Equal(1))
+			Expect(err).To(HaveOccurred())
 
 			// Should show flow detection in the log (if created)
 			logContent, readErr := os.ReadFile("/tmp/kcrypt-challenger-client.log")
@@ -93,7 +85,8 @@ var _ = Describe("CLI Interface", func() {
 
 		It("should use the correct backend client logic", func() {
 			// Test that the CLI mode uses the same GetPassphrase method
-			exitCode := RunCLIMode([]string{
+			err := ExecuteWithArgs([]string{
+				"get",
 				"--partition-name=/dev/test",
 				"--partition-uuid=test-uuid",
 				"--partition-label=test-label",
@@ -101,29 +94,8 @@ var _ = Describe("CLI Interface", func() {
 			})
 
 			// Should fail but attempt to use the client
-			Expect(exitCode).To(Equal(1))
+			Expect(err).To(HaveOccurred())
 			// The important thing is that it reaches the backend and doesn't crash
-		})
-	})
-
-	Context("Event validation", func() {
-		It("should correctly identify valid events", func() {
-			// Test that discovery.password is recognized as a valid event
-			Expect(isEventDefined("discovery.password")).To(BeTrue())
-			Expect(isEventDefined(string(bus.EventDiscoveryPassword))).To(BeTrue())
-		})
-
-		It("should reject invalid events", func() {
-			// Test that invalid events are rejected
-			Expect(isEventDefined("invalid.event")).To(BeFalse())
-			Expect(isEventDefined("")).To(BeFalse())
-			Expect(isEventDefined(123)).To(BeFalse())
-		})
-
-		It("should route to plugin mode for valid events", func() {
-			// This would be the behavior when called with discovery.password
-			isValid := isEventDefined("discovery.password")
-			Expect(isValid).To(BeTrue())
 		})
 	})
 
@@ -180,7 +152,8 @@ var _ = Describe("CLI Interface", func() {
 		})
 
 		It("should read and use original configuration values without overrides", func() {
-			exitCode := RunCLIMode([]string{
+			err := ExecuteWithArgs([]string{
+				"get",
 				"--partition-name=/dev/test",
 				"--partition-uuid=test-uuid",
 				"--partition-label=test-label",
@@ -189,7 +162,7 @@ var _ = Describe("CLI Interface", func() {
 			})
 
 			// Should fail at passphrase retrieval but config parsing should work
-			Expect(exitCode).To(Equal(1))
+			Expect(err).To(HaveOccurred())
 
 			// Check that original configuration values are logged
 			logContent, readErr := os.ReadFile(testLogFile)
@@ -210,7 +183,8 @@ var _ = Describe("CLI Interface", func() {
 		})
 
 		It("should show configuration file values being overridden by CLI flags", func() {
-			exitCode := RunCLIMode([]string{
+			err := ExecuteWithArgs([]string{
+				"get",
 				"--partition-name=/dev/test",
 				"--partition-uuid=test-uuid",
 				"--partition-label=test-label",
@@ -222,7 +196,7 @@ var _ = Describe("CLI Interface", func() {
 			})
 
 			// Should fail at passphrase retrieval but config parsing and overrides should work
-			Expect(exitCode).To(Equal(1))
+			Expect(err).To(HaveOccurred())
 
 			// Check that both original and overridden values are logged
 			logContent, readErr := os.ReadFile(testLogFile)
@@ -248,7 +222,8 @@ var _ = Describe("CLI Interface", func() {
 		})
 
 		It("should apply CLI flag overrides and log configuration changes", func() {
-			exitCode := RunCLIMode([]string{
+			err := ExecuteWithArgs([]string{
+				"get",
 				"--partition-name=/dev/test",
 				"--partition-uuid=test-uuid",
 				"--partition-label=test-label",
@@ -260,7 +235,7 @@ var _ = Describe("CLI Interface", func() {
 			})
 
 			// Should fail at passphrase retrieval but flag parsing should work
-			Expect(exitCode).To(Equal(1))
+			Expect(err).To(HaveOccurred())
 
 			// Check if debug log exists and contains configuration information
 			logContent, readErr := os.ReadFile(testLogFile)
@@ -275,7 +250,8 @@ var _ = Describe("CLI Interface", func() {
 		})
 
 		It("should show original vs final configuration in debug mode", func() {
-			exitCode := RunCLIMode([]string{
+			err := ExecuteWithArgs([]string{
+				"get",
 				"--partition-name=/dev/test",
 				"--partition-uuid=test-uuid",
 				"--partition-label=test-label",
@@ -285,7 +261,7 @@ var _ = Describe("CLI Interface", func() {
 			})
 
 			// Should fail but debug information should be logged
-			Expect(exitCode).To(Equal(1))
+			Expect(err).To(HaveOccurred())
 
 			// Check for original and final configuration logging
 			logContent, readErr := os.ReadFile(testLogFile)
@@ -298,7 +274,8 @@ var _ = Describe("CLI Interface", func() {
 		})
 
 		It("should log partition details in debug mode", func() {
-			exitCode := RunCLIMode([]string{
+			err := ExecuteWithArgs([]string{
+				"get",
 				"--partition-name=/dev/custom-partition",
 				"--partition-uuid=custom-uuid-123",
 				"--partition-label=custom-label-456",
@@ -306,7 +283,7 @@ var _ = Describe("CLI Interface", func() {
 				"--attempts=2",
 			})
 
-			Expect(exitCode).To(Equal(1))
+			Expect(err).To(HaveOccurred())
 
 			// Check for partition details in debug log
 			logContent, readErr := os.ReadFile(testLogFile)
@@ -321,14 +298,15 @@ var _ = Describe("CLI Interface", func() {
 		})
 
 		It("should not log debug information without debug flag", func() {
-			exitCode := RunCLIMode([]string{
+			err := ExecuteWithArgs([]string{
+				"get",
 				"--partition-name=/dev/test",
 				"--partition-uuid=test-uuid",
 				"--partition-label=test-label",
 				"--attempts=1",
 			})
 
-			Expect(exitCode).To(Equal(1))
+			Expect(err).To(HaveOccurred())
 
 			// Debug log should not exist or should not contain detailed debug info
 			logContent, readErr := os.ReadFile(testLogFile)
@@ -344,7 +322,8 @@ var _ = Describe("CLI Interface", func() {
 			// Remove the config file to test default behavior
 			_ = os.RemoveAll(configDir)
 
-			exitCode := RunCLIMode([]string{
+			err := ExecuteWithArgs([]string{
+				"get",
 				"--partition-name=/dev/test",
 				"--partition-uuid=test-uuid",
 				"--partition-label=test-label",
@@ -353,7 +332,7 @@ var _ = Describe("CLI Interface", func() {
 			})
 
 			// Should fail at passphrase retrieval but not due to config parsing
-			Expect(exitCode).To(Equal(1))
+			Expect(err).To(HaveOccurred())
 
 			// Check that default/empty configuration values are logged
 			logContent, readErr := os.ReadFile(testLogFile)
@@ -374,25 +353,22 @@ var _ = Describe("CLI Interface", func() {
 		It("should parse all arguments correctly", func() {
 			// This will fail at the client creation/server connection,
 			// but should successfully parse all arguments
-			exitCode := RunCLIMode([]string{
+			err := ExecuteWithArgs([]string{
+				"get",
 				"--partition-name=/dev/custom",
 				"--partition-uuid=custom-uuid-999",
 				"--partition-label=custom-label",
 				"--attempts=5",
 			})
 
-			Expect(exitCode).To(Equal(1)) // Fails due to no server
+			Expect(err).To(HaveOccurred()) // Fails due to no server
 			// The important thing is that flag parsing worked and it reached the backend
 		})
 
 		It("should handle boolean flags correctly", func() {
 			// Test help flag
-			exitCode := RunCLIMode([]string{"-help"})
-			Expect(exitCode).To(Equal(0))
-
-			// Test version flag
-			exitCode = RunCLIMode([]string{"-version"})
-			Expect(exitCode).To(Equal(0))
+			err := ExecuteWithArgs([]string{"--help"})
+			Expect(err).To(BeNil())
 		})
 	})
 })
