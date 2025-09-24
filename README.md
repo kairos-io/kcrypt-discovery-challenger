@@ -117,3 +117,99 @@ TEST SUITE: None
 # Installs challenger
 $ helm install kairos-challenger kairos/kcrypt-challenger
 ```
+
+## TODO: Implement Selective Enrollment Mode for Attestation Data
+
+### Problem Statement
+
+Currently, the TPM attestation system faces operational challenges in real-world deployments:
+
+1. **Test Complexity**: Tests require manually creating SealedVolumes with complex mock attestation data (EK, AK, PCR values)
+2. **Upgrade Compatibility**: Kernel upgrades change PCR values, causing TPM quarantine and disk inaccessibility  
+3. **Operational Flexibility**: No mechanism for operators to reset/update attestation data after TPM replacement, firmware upgrades, or key rotation
+
+### Proposed Solution: Selective Enrollment Mode
+
+Implement a "selective enrollment mode" with two distinct behaviors:
+
+#### **Initial TOFU Enrollment** (No SealedVolume exists)
+- **Store ALL PCRs** provided by the client (don't omit any)
+- Create complete attestation baseline from first contact
+- Enables full security verification for subsequent attestations
+
+#### **Selective Re-enrollment** (SealedVolume exists with specific fields)
+- **Empty values** (`""`) = Accept any value, update the stored value
+- **Set values** (`"abc123..."`) = Enforce exact match
+- **Omitted fields** = Skip verification entirely (allows flexibility)
+
+### Required Implementation Changes
+
+#### 1. **SealedVolume API Enhancement**
+```yaml
+# Example 1: Initial TOFU (no SealedVolume exists)
+# Server creates this automatically with ALL received PCRs:
+spec:
+  TPMHash: "computed-from-client"
+  attestation:
+    ekPublicKey: "learned-ek"
+    akPublicKey: "learned-ak"  
+    pcrValues:
+      pcrs:
+        "0": "abc123..."        # All received PCRs stored
+        "7": "def456..."        
+        "11": "ghi789..."       # Including PCR 11 if provided
+
+# Example 2: Selective Re-enrollment (operator control)
+spec:
+  TPMHash: "required-tmp-hash"  # MUST be set for client matching
+  attestation:
+    ekPublicKey: ""             # Empty = re-enrollment mode
+    akPublicKey: "fixed-ak"     # Set = enforce this value
+    pcrValues:
+      pcrs:
+        "0": ""                 # Empty = re-enrollment mode
+        "7": "fixed-value"      # Set = enforce this value
+        # "11": omitted         # Omitted = skip entirely (flexible boot stages)
+```
+
+#### 2. **Server Logic Updates**
+- **TOFU Logic**: When no SealedVolume exists, store ALL received PCRs (don't omit any)
+- **Re-enrollment Logic**: 
+  - Modify `verifyAKMatch()` to handle empty AK fields as re-enrollment mode
+  - Modify `verifyPCRValues()` to handle empty PCR values as re-enrollment mode
+  - Handle omitted PCR fields as "skip verification entirely"
+- Add logic to update SealedVolume specs when learning new values
+- Ensure TPM hash is always required and validated for client matching
+
+#### 3. **Test Simplification**
+Replace complex mock attestation data in tests with simple enrollment mode:
+```yaml
+# tests/encryption_test.go - remote-static test
+spec:
+  TPMHash: "computed-from-vm"   # Get from /system/discovery/kcrypt-discovery-challenger
+  partitions:
+    - label: COS_PERSISTENT
+      secret: {name: "static-passphrase", path: "pass"}
+  attestation: {}               # Full enrollment mode
+```
+
+### Use Cases Solved
+
+1. **Pure TOFU**: No SealedVolume exists → System learns ALL attestation data from first contact
+2. **Static Passphrase Tests**: Create Secret + SealedVolume with TPM hash, let TOFU handle attestation data
+3. **Production Manual Setup**: Operators set known passphrases + TPM hashes, system learns remaining security data
+4. **Firmware Upgrades**: Set PCR 0 to empty to re-learn after BIOS updates
+5. **TPM Replacement**: Set AK/EK fields to empty to re-learn after hardware changes
+6. **Flexible Boot Stages**: Omit PCR 11 entirely so users can decrypt during boot AND after full system startup
+7. **Kernel Updates**: Omit PCR 11 to avoid quarantine on routine Kairos upgrades
+
+### Critical Implementation Notes
+
+- **TPM Hash MUST remain mandatory** - without it, multiple clients would match the same SealedVolume
+- **EK verification should remain strict** - only AK and PCRs should support enrollment mode
+- **Add proper logging** for enrollment events for audit trails
+- **Consider rate limiting** to prevent abuse of enrollment mode
+- **Update documentation** with operational procedures for each use case
+
+### Priority: High
+This blocks current test failures and addresses fundamental operational challenges for production deployments.
