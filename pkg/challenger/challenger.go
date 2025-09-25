@@ -53,6 +53,7 @@ var upgrader = websocket.Upgrader{
 
 func cleanKubeName(s string) (d string) {
 	d = strings.ReplaceAll(s, "_", "-")
+	d = strings.ReplaceAll(d, "/", "-") // Replace forward slashes with hyphens
 	d = strings.ToLower(d)
 	return
 }
@@ -625,9 +626,12 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 func performInitialEnrollment(ctx *EnrollmentContext, attestation *ClientAttestation, reconciler *controllers.SealedVolumeReconciler, kclient *kubernetes.Clientset, namespace string, logger logr.Logger) error {
 	logger.Info("Creating new TOFU enrollment")
 
-	// Generate secret name and path for new enrollment
-	secretName := fmt.Sprintf("tofu-%s", ctx.TPMHash[:8])
-	secretPath := "/tmp/disk_passphrase"
+	// Generate secret name and path for new enrollment using DefaultSecret logic
+	volumeData := SealedVolumeData{
+		PartitionLabel: ctx.Partition.Label,
+		VolumeName:     fmt.Sprintf("tofu-%s", ctx.TPMHash[:8]),
+	}
+	secretName, secretPath := volumeData.DefaultSecret()
 
 	// Generate secure passphrase for new enrollment
 	passphrase, err := generateTOFUPassphrase()
@@ -655,11 +659,18 @@ func performInitialEnrollment(ctx *EnrollmentContext, attestation *ClientAttesta
 		return fmt.Errorf("creating TOFU SealedVolume: %w", err)
 	}
 
+	// Update the enrollment context with volume data for passphrase retrieval
+	ctx.VolumeData = &SealedVolumeData{
+		Quarantined:    false,
+		SecretName:     secretName,
+		SecretPath:     secretPath,
+		VolumeName:     volumeData.VolumeName,
+		PartitionLabel: volumeData.PartitionLabel,
+	}
+
 	logger.Info("TOFU enrollment completed", "secretName", secretName, "secretPath", secretPath)
 	return nil
 }
-
-// TODO: Implement these functions to replace the old handleTPMAttestation
 
 // verifyAttestationData verifies AK and PCR data using selective enrollment
 func verifyAttestationData(ctx *EnrollmentContext, attestation *ClientAttestation, logger logr.Logger) error {
@@ -726,19 +737,14 @@ func updateEnrollmentData(ctx *EnrollmentContext, attestation *ClientAttestation
 
 // sendPassphrase retrieves and securely sends the passphrase to the client
 func sendPassphrase(conn *websocket.Conn, ctx *EnrollmentContext, kclient *kubernetes.Clientset, namespace string, logger logr.Logger) error {
-	var secretName, secretPath string
-
-	if ctx.IsNewEnrollment {
-		// For new enrollments, use the TOFU secret created in performInitialEnrollment
-		secretName = fmt.Sprintf("tofu-%s", ctx.TPMHash[:8])
-		secretPath = "/tmp/disk_passphrase"
-		logger.Info("Retrieving passphrase for new TOFU enrollment", "secretName", secretName)
-	} else {
-		// For existing enrollments, get passphrase from stored secret
-		secretName = ctx.VolumeData.SecretName
-		secretPath = ctx.VolumeData.SecretPath
-		logger.Info("Retrieving passphrase for known TPM", "secretName", secretName)
+	// After performInitialEnrollment, VolumeData should always be populated
+	if ctx.VolumeData == nil {
+		return fmt.Errorf("no volume data available - enrollment may have failed")
 	}
+
+	// Get secret name and path from the enrolled volume data
+	secretName, secretPath := ctx.VolumeData.DefaultSecret()
+	logger.Info("Retrieving passphrase", "secretName", secretName, "tpmHash", ctx.TPMHash[:8])
 
 	// Retrieve the secret
 	secret, err := kclient.CoreV1().Secrets(namespace).Get(context.TODO(), secretName, metav1.GetOptions{})
@@ -748,7 +754,7 @@ func sendPassphrase(conn *websocket.Conn, ctx *EnrollmentContext, kclient *kuber
 
 	secretData, exists := secret.Data[secretPath]
 	if !exists {
-		return fmt.Errorf("passphrase not found in secret at path: %s", secretPath)
+		return fmt.Errorf("passphrase not found in secret at key: %s", secretPath)
 	}
 
 	// Send passphrase securely to client
@@ -1144,7 +1150,6 @@ func performTPMAuthentication(conn *websocket.Conn, logger logr.Logger) (*Client
 
 	challengeResp := tpm.AttestationChallengeResponse{
 		Challenge: challenge.EC,
-		Enrolled:  false, // Will be determined later in enrollment context
 	}
 
 	logger.Info("Sending challenge to client")

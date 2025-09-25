@@ -250,7 +250,7 @@ func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[st
 	if err := conn.ReadJSON(&challengeResp); err != nil {
 		return "", fmt.Errorf("reading challenge from server: %w", err)
 	}
-	c.Logger.Debugf("Challenge received - Enrolled: %t", challengeResp.Enrolled)
+	c.Logger.Debugf("Challenge received")
 
 	// Protocol Step 3: Create proof request using AK Manager
 	c.Logger.Debugf("Debug: Creating proof request from challenge response")
