@@ -118,19 +118,22 @@ TEST SUITE: None
 $ helm install kairos-challenger kairos/kcrypt-challenger
 ```
 
-## TODO: Implement Selective Enrollment Mode for Attestation Data
+## Selective Enrollment Mode for TPM Attestation
 
-### Problem Statement
+The kcrypt-challenger implements a sophisticated "selective enrollment mode" that solves operational challenges in real-world TPM-based disk encryption deployments. This feature provides flexible attestation management while maintaining strong security guarantees.
 
-Currently, the TPM attestation system faces operational challenges in real-world deployments:
+### Key Features
 
-1. **Test Complexity**: Tests require manually creating SealedVolumes with complex mock attestation data (EK, AK, PCR values)
-2. **Upgrade Compatibility**: Kernel upgrades change PCR values, causing TPM quarantine and disk inaccessibility  
-3. **Operational Flexibility**: No mechanism for operators to reset/update attestation data after TPM replacement, firmware upgrades, or key rotation
+✅ **Implemented**: Full selective enrollment with three field states (empty, set, omitted)
+✅ **Implemented**: Trust On First Use (TOFU) automatic enrollment
+✅ **Implemented**: Secret reuse after SealedVolume recreation  
+✅ **Implemented**: PCR re-enrollment for kernel upgrades
+✅ **Implemented**: PCR omission for volatile boot stages
+✅ **Implemented**: Early quarantine checking with fail-fast behavior
 
-### Proposed Solution: Selective Enrollment Mode
+### How Selective Enrollment Works
 
-Implement a "selective enrollment mode" with two distinct behaviors:
+The system supports two distinct enrollment behaviors:
 
 #### **Initial TOFU Enrollment** (No SealedVolume exists)
 - **Store ALL PCRs** provided by the client (don't omit any)
@@ -150,55 +153,44 @@ Implement a "selective enrollment mode" with two distinct behaviors:
 | **Set** (`"abc123"`) | ✅ Enforce exact match | ❌ No updates | Strict security enforcement |
 | **Omitted** (deleted) | ❌ Skip entirely | ❌ Never re-enrolled | Ignore volatile PCRs (e.g., PCR 11) |
 
-### Required Implementation Changes
+### SealedVolume API Examples
 
-#### 1. **SealedVolume API Enhancement**
+#### **Example 1: Initial TOFU Enrollment**
+When no SealedVolume exists, the server automatically creates one with ALL received PCRs:
+
 ```yaml
-# Example 1: Initial TOFU (no SealedVolume exists)
-# Server creates this automatically with ALL received PCRs:
+# Server creates this automatically during TOFU enrollment
+apiVersion: keyserver.kairos.io/v1alpha1
+kind: SealedVolume
 spec:
   TPMHash: "computed-from-client"
   attestation:
-    ekPublicKey: "learned-ek"
-    akPublicKey: "learned-ak"  
+    ekPublicKey: "learned-ek"    # Learned from client
+    akPublicKey: "learned-ak"    # Learned from client
     pcrValues:
       pcrs:
-        "0": "abc123..."        # All received PCRs stored
+        "0": "abc123..."         # All received PCRs stored
         "7": "def456..."        
-        "11": "ghi789..."       # Including PCR 11 if provided
-
-# Example 2: Selective Re-enrollment (operator control)
-spec:
-  TPMHash: "required-tmp-hash"  # MUST be set for client matching
-  attestation:
-    ekPublicKey: ""             # Empty = re-enrollment mode
-    akPublicKey: "fixed-ak"     # Set = enforce this value
-    pcrValues:
-      pcrs:
-        "0": ""                 # Empty = re-enrollment mode
-        "7": "fixed-value"      # Set = enforce this value
-        # "11": omitted         # Omitted = skip entirely (flexible boot stages)
+        "11": "ghi789..."        # Including PCR 11 if provided
 ```
 
-#### 2. **Server Logic Updates**
-- **TOFU Logic**: When no SealedVolume exists, store ALL received PCRs (don't omit any)
-- **Re-enrollment Logic**: 
-  - Modify `verifyAKMatch()` to handle empty AK fields as re-enrollment mode
-  - Modify `verifyPCRValues()` to handle empty PCR values as re-enrollment mode
-  - Handle omitted PCR fields as "skip verification entirely"
-- Add logic to update SealedVolume specs when learning new values
-- Ensure TPM hash is always required and validated for client matching
+#### **Example 2: Selective Re-enrollment Control**
+Operators can control which fields allow re-enrollment:
 
-#### 3. **Test Simplification**
-Replace complex mock attestation data in tests with simple enrollment mode:
 ```yaml
-# tests/encryption_test.go - remote-static test
+# Operator-controlled selective enforcement
+apiVersion: keyserver.kairos.io/v1alpha1
+kind: SealedVolume
 spec:
-  TPMHash: "computed-from-vm"   # Get from /system/discovery/kcrypt-discovery-challenger
-  partitions:
-    - label: COS_PERSISTENT
-      secret: {name: "static-passphrase", path: "pass"}
-  attestation: {}               # Full enrollment mode
+  TPMHash: "required-tpm-hash"   # MUST be set for client matching
+  attestation:
+    ekPublicKey: ""              # Empty = re-enrollment mode
+    akPublicKey: "fixed-ak"      # Set = enforce this value
+    pcrValues:
+      pcrs:
+        "0": ""                  # Empty = re-enrollment mode
+        "7": "fixed-value"       # Set = enforce this value
+        # "11": omitted          # Omitted = skip entirely
 ```
 
 ### Use Cases Solved
@@ -340,13 +332,13 @@ kubectl get sealedvolume my-volume -o jsonpath='{.spec.attestation.pcrValues.pcr
 - **Scenario 2 (Omit PCR)**: PCR 11 permanently ignored, never verified again
 - **Scenario 4 (Empty PCR)**: PCR 11 temporarily re-enrolled, then enforced with new value
 
-### Critical Implementation Notes
+### Security Architecture
 
-- **TPM Hash MUST remain mandatory** - without it, multiple clients would match the same SealedVolume
-- **EK verification should remain strict** - only AK and PCRs should support enrollment mode
-- **Add proper logging** for enrollment events for audit trails
-- **Consider rate limiting** to prevent abuse of enrollment mode
-- **Update documentation** with operational procedures for each use case
+- **TPM Hash is mandatory** - prevents multiple clients from matching the same SealedVolume
+- **EK verification remains strict** - only AK and PCRs support selective enrollment modes
+- **Early quarantine checking** - quarantined TPMs are rejected immediately after authentication
+- **Comprehensive logging** - all enrollment events are logged for audit trails
+- **Challenge-response authentication** - prevents TPM impersonation attacks
 
 ### Quick Reference for Documentation
 
@@ -377,5 +369,81 @@ kubectl get sealedvolume my-volume -o jsonpath='{.spec.attestation.pcrValues.pcr
 - `"PCR verification successful using selective enrollment"` - Omitted PCRs ignored
 - `"PCR enforcement mode verification passed"` - Strict enforcement active
 
+## TODO: E2E Testing Coverage for Selective Enrollment
+
 ### Priority: High
-This blocks current test failures and addresses fundamental operational challenges for production deployments.
+The selective enrollment implementation is complete, but comprehensive E2E tests are needed to ensure all scenarios work correctly in real-world deployments.
+
+### Required E2E Test Scenarios
+
+#### **1. Basic Enrollment Flows**
+- [ ] **Pure TOFU Enrollment**: First-time enrollment with automatic attestation data learning
+- [ ] **Manual SealedVolume Creation**: Pre-created SealedVolume with selective field configuration
+- [ ] **Secret Reuse**: SealedVolume recreation while preserving existing Kubernetes secrets
+
+#### **2. Quarantine Management**
+- [ ] **Quarantined TPM Rejection**: Verify quarantined TPMs are rejected immediately after authentication
+- [ ] **Quarantine Flag Enforcement**: Ensure no enrollment or verification occurs for quarantined TPMs
+- [ ] **Quarantine Recovery**: Test un-quarantining process (if/when implemented)
+
+#### **3. PCR Management Scenarios**
+- [ ] **PCR Re-enrollment**: Set PCR to empty string, verify it learns new value and resumes enforcement
+- [ ] **PCR Omission**: Remove PCR entirely, verify it's permanently ignored in future attestations and not re-enrolled.
+- [ ] **Kernel Upgrade Workflow**: Full kernel upgrade cycle with PCR 11 re-enrollment
+- [ ] **Mixed PCR States**: SealedVolume with some enforced, some re-enrollment, some omitted PCRs
+
+#### **4. AK Management**
+- [ ] **AK Re-enrollment**: Set AK to empty string, verify it learns new AK after TPM replacement
+- [ ] **AK Enforcement**: Set AK to specific value, verify exact match is required
+- [ ] **TPM Replacement**: Full TPM hardware replacement with AK re-learning
+
+#### **5. Security Verification**
+- [ ] **PCR Mismatch Detection**: Verify enforcement mode correctly rejects changed PCR values
+- [ ] **AK Mismatch Detection**: Verify enforcement mode correctly rejects different AK keys
+- [ ] **TPM Impersonation Prevention**: Verify challenge-response prevents replay attacks
+- [ ] **Invalid TPM Hash**: Verify clients with wrong TPM hash are rejected
+
+#### **6. Operational Workflows**
+- [ ] **Firmware Upgrade**: BIOS/UEFI update changing PCR 0, test re-enrollment workflow
+- [ ] **Multi-Partition Support**: Multiple partitions on same TPM with different encryption keys
+- [ ] **Namespace Isolation**: Multiple SealedVolumes in different namespaces
+- [ ] **Resource Cleanup**: Verify proper cleanup when SealedVolumes/Secrets are deleted
+
+#### **7. Error Handling & Edge Cases**
+- [ ] **Network Failures**: Connection drops during various stages of attestation
+- [ ] **Malformed Attestation Data**: Invalid EK/AK/PCR data handling
+- [ ] **Resource Conflicts**: Multiple clients attempting enrollment simultaneously
+- [ ] **Storage Failures**: Kubernetes API failures during SealedVolume updates
+
+#### **8. Performance & Scalability**
+- [ ] **Concurrent Attestations**: Multiple TPMs requesting passphrases simultaneously
+- [ ] **Large PCR Sets**: Attestation with many PCRs (0-23)
+- [ ] **Long-Running Stability**: Extended operation over multiple hours/days
+
+#### **9. Logging & Observability**
+- [ ] **Audit Trail Verification**: Ensure all security events are properly logged
+- [ ] **Log Message Accuracy**: Verify expected log messages appear for each scenario
+- [ ] **Metrics Collection**: Performance and security metrics are captured correctly
+
+#### **10. Compatibility Testing**
+- [ ] **Multiple TPM Versions**: TPM 1.2 vs TPM 2.0 compatibility (if supported)
+- [ ] **Different Kernel Versions**: Various PCR 11 behaviors across kernel versions
+- [ ] **Hardware Variations**: Different TPM chip manufacturers and models
+
+### Test Environment Requirements
+
+- **Real TPM Hardware**: Software TPM simulators may not catch hardware-specific issues
+- **Kernel Build Pipeline**: Ability to test actual kernel upgrades and PCR changes
+- **Multi-Node Clusters**: Test distributed scenarios and namespace isolation
+- **Network Partitioning**: Test resilience under network failures
+- **Performance Monitoring**: Metrics collection for scalability validation
+
+### Success Criteria
+
+All E2E tests must pass consistently across:
+- Different hardware configurations (various TPM chips)
+- Multiple kernel versions (to test PCR 11 variability) 
+- Various cluster configurations (single-node, multi-node)
+- Different load conditions (single client, concurrent clients)
+
+Completing this E2E test suite will provide confidence that the selective enrollment system works reliably in production environments.
