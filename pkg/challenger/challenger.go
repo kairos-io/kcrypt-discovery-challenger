@@ -21,9 +21,7 @@ import (
 	"github.com/kairos-io/kairos-challenger/controllers"
 	tpm "github.com/kairos-io/tpm-helpers"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -244,11 +242,56 @@ func createTOFUSealedVolume(reconciler *controllers.SealedVolumeReconciler, name
 	return reconciler.Create(context.TODO(), sealedVolume)
 }
 
+// createTOFUSealedVolumeWithAttestation creates a SealedVolume resource with pre-created attestation data
+func createTOFUSealedVolumeWithAttestation(reconciler *controllers.SealedVolumeReconciler, namespace, tpmHash, secretName, secretPath string, partition PartitionInfo, attestation *keyserverv1alpha1.AttestationSpec) error {
+	sealedVolume := &keyserverv1alpha1.SealedVolume{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cleanKubeName(fmt.Sprintf("tofu-%s", tpmHash[:8])),
+			Namespace: namespace,
+		},
+		Spec: keyserverv1alpha1.SealedVolumeSpec{
+			TPMHash: tpmHash,
+			Partitions: []keyserverv1alpha1.PartitionSpec{
+				{
+					Label:      partition.Label,
+					DeviceName: partition.DeviceName,
+					UUID:       partition.UUID,
+					Secret: &keyserverv1alpha1.SecretSpec{
+						Name: secretName,
+						Path: secretPath,
+					},
+				},
+			},
+			Quarantined: false,
+			Attestation: attestation,
+		},
+	}
+
+	return reconciler.Create(context.TODO(), sealedVolume)
+}
+
 // PartitionInfo holds partition identification data from client headers
 type PartitionInfo struct {
 	Label      string
 	DeviceName string
 	UUID       string
+}
+
+// ClientAttestation holds all client-provided attestation data
+type ClientAttestation struct {
+	EK        *attest.EK
+	AK        *attest.AttestationParameters
+	PCRQuote  []byte
+	PCRValues *keyserverv1alpha1.PCRValues
+}
+
+// EnrollmentContext represents the current enrollment state
+type EnrollmentContext struct {
+	IsNewEnrollment bool
+	SealedVolume    *keyserverv1alpha1.SealedVolume
+	VolumeData      *SealedVolumeData
+	TPMHash         string
+	Partition       PartitionInfo
 }
 
 // encodeEKToPEM converts an attest.EK to PEM format for storage
@@ -526,312 +569,199 @@ func logRequestHandler(logger logr.Logger, h http.Handler) http.Handler {
 	})
 }
 
-// handleTPMAttestation handles the TPM attestation flow using WebSocket protocol
+// handleTPMAttestation is the refactored TPM attestation flow with clean narrative
 func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Logger, reconciler *controllers.SealedVolumeReconciler, kclient *kubernetes.Clientset, namespace string) {
-	logger.V(1).Info("Debug: Attempting to upgrade HTTP connection to WebSocket", "remoteAddr", r.RemoteAddr)
-	conn, err := upgrader.Upgrade(w, r, nil)
+	// 1. Establish secure connection
+	conn, partition, err := establishAttestationConnection(w, r, logger)
 	if err != nil {
-		logger.Error(err, "upgrading connection for TPM attestation")
-		return
+		return // Error already logged and handled
 	}
-	defer func() {
-		err := conn.Close()
-		if err != nil {
-			// Don't log "use of closed network connection" as an error since we might have already closed it
-			if !isConnectionClosed(err) {
-				logger.Error(err, "closing the connection")
-			}
-		}
-	}()
+	defer conn.Close()
 
-	logger.Info("Starting TPM attestation WebSocket flow")
-
-	// Get partition details from headers (sent by client)
-	partition := PartitionInfo{
-		Label:      r.Header.Get("label"),
-		DeviceName: r.Header.Get("name"),
-		UUID:       r.Header.Get("uuid"),
-	}
-	logger.Info("Partition details from client", "label", partition.Label, "name", partition.DeviceName, "uuid", partition.UUID)
-
-	// Protocol Step 1: Receive client's EK and AK attestation data
-	logger.Info("Waiting for client attestation data")
-	var clientData struct {
-		EKBytes []byte `json:"ek_bytes"`
-		AKBytes []byte `json:"ak_bytes"`
-	}
-	if err := conn.ReadJSON(&clientData); err != nil {
-		errorMessage(conn, logger, fmt.Errorf("reading attestation data: %w", err), "WebSocket read")
-		return
-	}
-	logger.Info("Received attestation data from client")
-
-	// Decode EK from PEM bytes
-	ek, err := tpm.DecodeEK(clientData.EKBytes)
+	// 2. Perform TPM challenge-response authentication
+	clientAttestation, tpmHash, err := performTPMAuthentication(conn, logger)
 	if err != nil {
-		errorMessage(conn, logger, fmt.Errorf("decoding EK from PEM: %w", err), "EK decode")
-		return
+		return // Error already sent to client
 	}
-	logger.Info("Successfully decoded EK from client")
 
-	// Decode AK parameters from JSON bytes
-	var akParams attest.AttestationParameters
-	if err := json.Unmarshal(clientData.AKBytes, &akParams); err != nil {
-		errorMessage(conn, logger, fmt.Errorf("unmarshaling AK parameters: %w", err), "AK decode")
-		return
-	}
-	logger.Info("Successfully decoded AK parameters from client")
-
-	// Get TPM hash for lookup/enrollment decisions
-	tpmHash, err := tpm.DecodePubHash(ek)
+	// 3. Determine enrollment status and get/create volume
+	enrollmentContext, err := determineEnrollmentContext(reconciler, namespace, tpmHash, partition, logger)
 	if err != nil {
-		errorMessage(conn, logger, fmt.Errorf("computing TPM hash: %w", err), "TPM hash")
-		return
-	}
-	logger.Info("Client TPM hash", "hash", tpmHash)
-
-	// Protocol Step 2: Generate challenge using go-attestation
-	logger.Info("Generating TPM attestation challenge")
-	secret, challengeBytes, err := tpm.GenerateChallenge(ek, &akParams)
-	if err != nil {
-		errorMessage(conn, logger, fmt.Errorf("generating challenge: %w", err), "Challenge generation")
+		errorMessage(conn, logger, err, "Enrollment context")
 		return
 	}
 
-	// Check if this TPM is already enrolled
-	requestData := PassphraseRequestData{
-		TPMHash:    tpmHash,
-		Label:      partition.Label,
-		DeviceName: partition.DeviceName,
-		UUID:       partition.UUID,
-	}
-
-	volumeList := &keyserverv1alpha1.SealedVolumeList{}
-	err = reconciler.List(context.TODO(), volumeList, client.InNamespace(namespace))
-	if err != nil {
-		errorMessage(conn, logger, fmt.Errorf("listing sealed volumes: %w", err), "Volume lookup")
+	// 4. Verify attestation data using selective enrollment
+	if err := verifyAttestationData(enrollmentContext, clientAttestation, logger); err != nil {
+		securityRejection(conn, logger, "Attestation verification failed", err.Error())
 		return
 	}
 
-	existingVolume, existingSealedVolume := findVolumeFor(requestData, volumeList)
-	isNewEnrollment := existingVolume == nil
-
-	// Debug: Log the enrollment status and what we found
-	logger.Info("TOFU enrollment check",
-		"tpmHash", tpmHash,
-		"partitionLabel", partition.Label,
-		"isNewEnrollment", isNewEnrollment,
-		"foundVolumes", len(volumeList.Items))
-
-	// Protocol Step 3: Send challenge to client
-	// The challengeBytes contain a Challenge{EC: *attest.EncryptedCredential} structure
-	var challenge struct {
-		EC *attest.EncryptedCredential `json:"EC"`
-	}
-	if err := json.Unmarshal(challengeBytes, &challenge); err != nil {
-		errorMessage(conn, logger, fmt.Errorf("unmarshaling challenge: %w", err), "Challenge unmarshal")
-		return
-	}
-
-	challengeResp := tpm.AttestationChallengeResponse{
-		Challenge: challenge.EC,
-		Enrolled:  isNewEnrollment,
-	}
-
-	logger.Info("Sending challenge to client", "enrolled", isNewEnrollment)
-	if err := conn.WriteJSON(challengeResp); err != nil {
-		errorMessage(conn, logger, fmt.Errorf("sending challenge: %w", err), "Challenge send")
-		return
-	}
-
-	// Protocol Step 4: Wait for client's proof response
-	logger.Info("Waiting for client proof response")
-	var proofReq tpm.ProofRequest
-	if err := conn.ReadJSON(&proofReq); err != nil {
-		errorMessage(conn, logger, fmt.Errorf("reading proof request: %w", err), "Proof read")
-		return
-	}
-
-	// Protocol Step 5: Validate the challenge response
-	logger.Info("Validating challenge response")
-	respBytes, err := json.Marshal(tpm.ChallengeResponse{Secret: proofReq.Secret})
-	if err != nil {
-		errorMessage(conn, logger, fmt.Errorf("marshaling response for validation: %w", err), "Response marshal")
-		return
-	}
-
-	if err := tpm.ValidateChallenge(secret, respBytes); err != nil {
-		errorMessage(conn, logger, fmt.Errorf("challenge validation failed: %w", err), "Challenge validation")
-		return
-	}
-	logger.Info("Challenge validation successful")
-
-	// Protocol Step 5.5: PCR verification for boot state validation
-	if len(proofReq.PCRQuote) > 0 {
-		logger.Info("Performing PCR verification")
-		currentPCRs, err := extractPCRValues(proofReq.PCRQuote)
-		if err != nil {
-			logger.Error(err, "Failed to extract PCR values from quote")
-			// PCR extraction failure is non-fatal for TOFU, but should be logged
-		} else {
-			// For existing enrollments, verify PCR values
-			if !isNewEnrollment {
-				// Get the full SealedVolume resource to access attestation data
-				actualVolume, err := getSealedVolumeByTPMHash(reconciler, namespace, tpmHash)
-				if err != nil {
-					logger.Error(err, "Failed to get SealedVolume for PCR verification")
-				} else if actualVolume != nil && actualVolume.Spec.Attestation != nil {
-					if err := verifyPCRValues(currentPCRs, actualVolume.Spec.Attestation.PCRValues, logger); err != nil {
-						logger.Info("PCR verification failed - quarantining TPM", "details", err.Error())
-
-						// Quarantine the TPM due to PCR mismatch
-						if qErr := quarantineSealedVolume(reconciler, namespace, tpmHash, logger); qErr != nil {
-							logger.Error(qErr, "Failed to quarantine SealedVolume")
-						}
-
-						securityRejection(conn, logger, "PCR verification failed", err.Error())
-						return
-					}
-				}
-			}
+	// 5. Handle enrollment: initial enrollment for new TPMs or re-enrollment updates for existing ones
+	if enrollmentContext.IsNewEnrollment {
+		// Perform initial TOFU enrollment for new TPMs
+		if err := performInitialEnrollment(enrollmentContext, clientAttestation, reconciler, kclient, namespace, logger); err != nil {
+			errorMessage(conn, logger, err, "Initial enrollment")
+			return
 		}
 	} else {
-		logger.Info("No PCR quote provided by client")
+		// Update attestation data for re-enrollment of existing TPMs
+		if err := updateEnrollmentData(enrollmentContext, clientAttestation, reconciler, logger); err != nil {
+			errorMessage(conn, logger, err, "Re-enrollment data update")
+			return
+		}
 	}
 
-	// Protocol Step 6: TOFU enrollment or passphrase retrieval
-	var passphrase string
+	// 6. Retrieve and send passphrase
+	if err := sendPassphrase(conn, enrollmentContext, kclient, namespace, logger); err != nil {
+		errorMessage(conn, logger, err, "Passphrase delivery")
+		return
+	}
 
-	if isNewEnrollment {
-		logger.Info("Performing TOFU enrollment for new TPM")
+	logger.Info("TPM attestation completed successfully")
+}
 
-		// Create secret name and path
-		volumeData := SealedVolumeData{
-			PartitionLabel: partition.Label,
-			VolumeName:     fmt.Sprintf("tofu-%s", tpmHash[:8]),
-		}
-		secretName, secretPath := volumeData.DefaultSecret()
+// performInitialEnrollment creates TOFU enrollment for new TPMs
+func performInitialEnrollment(ctx *EnrollmentContext, attestation *ClientAttestation, reconciler *controllers.SealedVolumeReconciler, kclient *kubernetes.Clientset, namespace string, logger logr.Logger) error {
+	logger.Info("Creating new TOFU enrollment")
 
-		logger.Info("TOFU secret details", "secretName", secretName, "secretPath", secretPath, "namespace", namespace)
+	// Generate secret name and path for new enrollment
+	secretName := fmt.Sprintf("tofu-%s", ctx.TPMHash[:8])
+	secretPath := "/tmp/disk_passphrase"
 
-		// Check if secret already exists (orphaned from previous failed enrollment)
-		existingSecret := &corev1.Secret{}
-		err = reconciler.Get(context.TODO(), types.NamespacedName{Name: secretName, Namespace: namespace}, existingSecret)
-		if err == nil {
-			// Secret exists but no SealedVolume - this is an orphaned secret from previous failed enrollment
-			logger.Info("Found orphaned TOFU secret, reusing existing passphrase", "secretName", secretName)
-			passphraseBytes, exists := existingSecret.Data[secretPath]
-			if !exists {
-				errorMessage(conn, logger, fmt.Errorf("orphaned secret missing passphrase data at path: %s", secretPath), "Secret data missing")
-				return
-			}
-			passphrase = string(passphraseBytes)
-		} else if errors.IsNotFound(err) {
-			// Secret doesn't exist, create new one
-			logger.Info("Creating new TOFU secret", "secretName", secretName)
+	// Generate secure passphrase for new enrollment
+	passphrase, err := generateTOFUPassphrase()
+	if err != nil {
+		return fmt.Errorf("generating TOFU passphrase: %w", err)
+	}
 
-			// Generate secure passphrase for new enrollment
-			passphrase, err = generateTOFUPassphrase()
-			if err != nil {
-				errorMessage(conn, logger, fmt.Errorf("generating TOFU passphrase: %w", err), "Passphrase generation")
-				return
-			}
+	// Create Kubernetes secret
+	if err := createTOFUSecret(kclient, namespace, secretName, secretPath, passphrase); err != nil {
+		return fmt.Errorf("creating TOFU secret: %w", err)
+	}
 
-			// Create Kubernetes secret
-			if err := createTOFUSecret(kclient, namespace, secretName, secretPath, passphrase); err != nil {
-				errorMessage(conn, logger, fmt.Errorf("creating TOFU secret: %w", err), "Secret creation")
-				return
-			}
-		} else {
-			// Some other error occurred
-			errorMessage(conn, logger, fmt.Errorf("checking for existing secret: %w", err), "Secret lookup")
-			return
-		}
+	// Create attestation data using initial TOFU logic (stores ALL provided PCRs)
+	attestationSpec := createInitialTOFUAttestation(attestation.AK, attestation.PCRValues, logger)
 
-		// Store current PCR values as "golden" values for future verification
-		var pcrValues *keyserverv1alpha1.PCRValues
-		if len(proofReq.PCRQuote) > 0 {
-			if extractedPCRs, err := extractPCRValues(proofReq.PCRQuote); err == nil {
-				pcrValues = extractedPCRs
-				logger.Info("Storing PCR values for future verification", "pcrCount", len(pcrValues.PCRs), "pcrs", pcrValues.PCRs)
-			} else {
-				logger.Error(err, "Failed to extract PCR values during enrollment")
-			}
-		}
+	// Extract EK in PEM format for storage
+	ekPEM, err := encodeEKToPEM(attestation.EK)
+	if err != nil {
+		return fmt.Errorf("encoding EK to PEM: %w", err)
+	}
+	attestationSpec.EKPublicKey = ekPEM
 
-		// Create SealedVolume resource for future attestations
-		if err := createTOFUSealedVolumeWithPCRs(reconciler, namespace, tpmHash, secretName, secretPath, partition, ek, &akParams, pcrValues); err != nil {
-			errorMessage(conn, logger, fmt.Errorf("creating TOFU SealedVolume: %w", err), "SealedVolume creation")
-			return
-		}
+	// Create SealedVolume resource for future attestations
+	if err := createTOFUSealedVolumeWithAttestation(reconciler, namespace, ctx.TPMHash, secretName, secretPath, ctx.Partition, attestationSpec); err != nil {
+		return fmt.Errorf("creating TOFU SealedVolume: %w", err)
+	}
 
-		logger.Info("TOFU enrollment completed", "secretName", secretName, "secretPath", secretPath)
-	} else {
-		logger.Info("Retrieving passphrase for known TPM")
+	logger.Info("TOFU enrollment completed", "secretName", secretName, "secretPath", secretPath)
+	return nil
+}
 
-		if existingVolume.Quarantined {
-			securityRejection(conn, logger, "TPM quarantined", "TPM has been quarantined due to previous security violations")
-			return
-		}
+// TODO: Implement these functions to replace the old handleTPMAttestation
 
-		// SECURITY: Verify AK public key matches the enrolled one
-		if err := verifyAKMatch(existingSealedVolume, &akParams, logger); err != nil {
-			logger.Info("AK verification failed - potential TPM impersonation attempt", "details", err.Error())
-			securityRejection(conn, logger, "AK verification failed", "Attestation Key does not match enrolled key - potential TPM impersonation")
-			return
-		}
+// verifyAttestationData verifies AK and PCR data using selective enrollment
+func verifyAttestationData(ctx *EnrollmentContext, attestation *ClientAttestation, logger logr.Logger) error {
+	// Skip verification for new enrollments (TOFU - Trust On First Use)
+	if ctx.IsNewEnrollment {
+		logger.Info("New enrollment - skipping attestation verification (TOFU)")
+		return nil
+	}
 
-		// SECURITY: Verify PCR values match the enrolled ones (boot state verification)
-		if len(proofReq.PCRQuote) > 0 {
-			if err := verifyPCRMatch(existingSealedVolume, proofReq.PCRQuote, logger); err != nil {
+	// For existing enrollments, perform security verification
+	logger.Info("Existing enrollment - performing security verification")
+
+	// Check if TPM is quarantined
+	if ctx.VolumeData.Quarantined {
+		return fmt.Errorf("TPM quarantined - access denied due to previous security violations")
+	}
+
+	// Verify AK public key matches the enrolled one using selective enrollment
+	if err := verifyAKMatchSelective(ctx.SealedVolume, attestation.AK, logger); err != nil {
+		logger.Info("AK verification failed - potential TPM impersonation attempt", "details", err.Error())
+		return fmt.Errorf("AK verification failed: %w", err)
+	}
+
+	// Verify PCR values match the enrolled ones using selective enrollment (boot state verification)
+	if attestation.PCRValues != nil {
+		if ctx.SealedVolume.Spec.Attestation != nil {
+			if err := verifyPCRValuesSelective(ctx.SealedVolume.Spec.Attestation.PCRValues, attestation.PCRValues, logger); err != nil {
 				logger.Info("PCR verification failed - boot state changed", "details", err.Error())
-				// Quarantine the TPM instead of rejecting completely
-				if quarantineErr := quarantineSealedVolume(reconciler, namespace, tpmHash, logger); quarantineErr != nil {
-					logger.Error(quarantineErr, "Failed to quarantine TPM after PCR mismatch")
-				}
-				securityRejection(conn, logger, "PCR verification failed", err.Error())
-				return
+				return fmt.Errorf("PCR verification failed: %w", err)
 			}
 		} else {
-			logger.Info("No PCR quote provided - skipping boot state verification")
+			logger.Info("No stored attestation data for PCR verification - accepting current PCRs")
 		}
-
-		logger.Info("TPM verification successful - same AK and boot state as enrollment")
-
-		// Get existing passphrase from Kubernetes secret
-		secretName, secretPath := existingVolume.DefaultSecret()
-		secret, err := kclient.CoreV1().Secrets(namespace).Get(context.TODO(), secretName, metav1.GetOptions{})
-		if err != nil {
-			errorMessage(conn, logger, fmt.Errorf("getting existing secret: %w", err), "Secret retrieval")
-			return
-		}
-
-		passphraseBytes, exists := secret.Data[secretPath]
-		if !exists {
-			errorMessage(conn, logger, fmt.Errorf("passphrase not found in secret"), "Passphrase missing")
-			return
-		}
-		passphrase = string(passphraseBytes)
-
-		// Update last verification timestamp
-		if err := updateLastVerificationTimestamp(reconciler, namespace, tpmHash); err != nil {
-			logger.Error(err, "Failed to update last verification timestamp")
-			// Non-fatal error, continue with passphrase response
-		}
+	} else {
+		logger.Info("No PCR data provided by client")
 	}
 
-	// Protocol Step 7: Send passphrase to client
-	logger.Info("Sending passphrase response to client")
-	proofResp := tpm.ProofResponse{
-		Passphrase: []byte(passphrase),
+	logger.Info("All attestation data verification successful")
+	return nil
+}
+
+// updateEnrollmentData updates attestation data for re-enrollment of existing TPMs
+func updateEnrollmentData(ctx *EnrollmentContext, attestation *ClientAttestation, reconciler *controllers.SealedVolumeReconciler, logger logr.Logger) error {
+	// Update any re-enrollment mode fields (empty values)
+	if ctx.SealedVolume.Spec.Attestation != nil {
+		logger.Info("Updating attestation data for re-enrollment mode fields")
+
+		if err := updateAttestationDataSelective(ctx.SealedVolume.Spec.Attestation, attestation.AK, attestation.PCRValues, logger); err != nil {
+			return fmt.Errorf("updating selective attestation data: %w", err)
+		}
+
+		// Update the SealedVolume resource if changes were made
+		if err := reconciler.Update(context.TODO(), ctx.SealedVolume); err != nil {
+			return fmt.Errorf("updating SealedVolume with new attestation data: %w", err)
+		}
+
+		logger.Info("Successfully updated attestation data")
+	} else {
+		logger.Info("No attestation data to update")
 	}
 
-	if err := conn.WriteJSON(proofResp); err != nil {
-		errorMessage(conn, logger, fmt.Errorf("sending passphrase response: %w", err), "Passphrase send")
-		return
+	return nil
+}
+
+// sendPassphrase retrieves and securely sends the passphrase to the client
+func sendPassphrase(conn *websocket.Conn, ctx *EnrollmentContext, kclient *kubernetes.Clientset, namespace string, logger logr.Logger) error {
+	var secretName, secretPath string
+
+	if ctx.IsNewEnrollment {
+		// For new enrollments, use the TOFU secret created in performInitialEnrollment
+		secretName = fmt.Sprintf("tofu-%s", ctx.TPMHash[:8])
+		secretPath = "/tmp/disk_passphrase"
+		logger.Info("Retrieving passphrase for new TOFU enrollment", "secretName", secretName)
+	} else {
+		// For existing enrollments, get passphrase from stored secret
+		secretName = ctx.VolumeData.SecretName
+		secretPath = ctx.VolumeData.SecretPath
+		logger.Info("Retrieving passphrase for known TPM", "secretName", secretName)
 	}
 
-	logger.Info("TPM attestation completed successfully", "tpmHash", tpmHash, "enrolled", isNewEnrollment)
+	// Retrieve the secret
+	secret, err := kclient.CoreV1().Secrets(namespace).Get(context.TODO(), secretName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("retrieving secret: %w", err)
+	}
+
+	secretData, exists := secret.Data[secretPath]
+	if !exists {
+		return fmt.Errorf("passphrase not found in secret at path: %s", secretPath)
+	}
+
+	// Send passphrase securely to client
+	response := tpm.ProofResponse{
+		Passphrase: secretData,
+	}
+
+	if err := conn.WriteJSON(response); err != nil {
+		return fmt.Errorf("sending passphrase response: %w", err)
+	}
+
+	logger.Info("Passphrase sent successfully to client")
+	return nil
 }
 
 // updateLastVerificationTimestamp updates the last verification time for an existing SealedVolume
@@ -974,4 +904,334 @@ func getSealedVolumeByTPMHash(reconciler *controllers.SealedVolumeReconciler, na
 	}
 
 	return nil, fmt.Errorf("SealedVolume not found for TPM hash: %s", tpmHash)
+}
+
+// verifyAKMatchSelective compares the current AK public key with the enrolled one using selective enrollment logic
+func verifyAKMatchSelective(sealedVolume *keyserverv1alpha1.SealedVolume, currentAK *attest.AttestationParameters, logger logr.Logger) error {
+	// Get the stored AK from the SealedVolume's attestation spec
+	if sealedVolume.Spec.Attestation == nil {
+		return fmt.Errorf("no attestation data in SealedVolume for verification")
+	}
+
+	storedAKPEM := sealedVolume.Spec.Attestation.AKPublicKey
+
+	// Empty stored AK = re-enrollment mode, accept any current AK
+	if storedAKPEM == "" {
+		logger.Info("AK re-enrollment mode: accepting any AK value")
+		return nil
+	}
+
+	// Non-empty stored AK = enforcement mode, require exact match
+	currentAKPEM, err := encodeAKToPEM(currentAK)
+	if err != nil {
+		return fmt.Errorf("encoding current AK to PEM: %w", err)
+	}
+
+	if storedAKPEM != currentAKPEM {
+		logger.Info("AK mismatch detected in enforcement mode",
+			"storedAKLength", len(storedAKPEM),
+			"currentAKLength", len(currentAKPEM))
+		return fmt.Errorf("AK public key does not match enrolled key - potential TPM impersonation")
+	}
+
+	logger.Info("AK verification successful - matches enrolled key")
+	return nil
+}
+
+// verifyPCRValuesSelective compares current PCR values against stored expected values using selective enrollment logic
+func verifyPCRValuesSelective(stored, current *keyserverv1alpha1.PCRValues, logger logr.Logger) error {
+	// No stored values = accept any current values (first enrollment or no requirements)
+	if stored == nil || stored.PCRs == nil {
+		logger.Info("No expected PCR values stored, accepting current values")
+		return nil
+	}
+
+	// No current values provided
+	if current == nil || current.PCRs == nil {
+		// Check if any stored PCRs are actually required (non-empty)
+		for pcrIndex, storedValue := range stored.PCRs {
+			if storedValue != "" {
+				return fmt.Errorf("no current PCR values provided but PCR%s is required", pcrIndex)
+			}
+		}
+		logger.Info("No current PCR values but all stored PCRs are in re-enrollment mode")
+		return nil
+	}
+
+	// Compare each stored PCR value using selective enrollment logic
+	for pcrIndex, storedValue := range stored.PCRs {
+		if storedValue == "" {
+			// Empty stored value = re-enrollment mode, accept any current value
+			logger.V(1).Info("PCR re-enrollment mode", "pcr", pcrIndex)
+			continue
+		}
+
+		// Non-empty stored value = enforcement mode, require exact match
+		currentValue, exists := current.PCRs[pcrIndex]
+		if !exists || currentValue == "" {
+			return fmt.Errorf("PCR%s mismatch: expected %s, but not provided in current values", pcrIndex, storedValue)
+		}
+
+		if storedValue != currentValue {
+			return fmt.Errorf("PCR%s changed - boot state verification failed: expected %s, got %s", pcrIndex, storedValue, currentValue)
+		}
+
+		logger.V(1).Info("PCR enforcement mode verification passed", "pcr", pcrIndex)
+	}
+
+	logger.Info("PCR verification successful using selective enrollment")
+	return nil
+}
+
+// updateAttestationDataSelective updates empty attestation fields with current values during selective enrollment
+func updateAttestationDataSelective(attestation *keyserverv1alpha1.AttestationSpec, currentAK *attest.AttestationParameters, currentPCRs *keyserverv1alpha1.PCRValues, logger logr.Logger) error {
+	updated := false
+
+	// Update AK if empty (re-enrollment mode)
+	if attestation.AKPublicKey == "" && currentAK != nil {
+		akPEM, err := encodeAKToPEM(currentAK)
+		if err != nil {
+			return fmt.Errorf("encoding AK to PEM for update: %w", err)
+		}
+		attestation.AKPublicKey = akPEM
+		logger.Info("Updated AK public key during selective enrollment")
+		updated = true
+	}
+
+	// Update PCR values if empty (re-enrollment mode)
+	if attestation.PCRValues != nil && currentPCRs != nil && currentPCRs.PCRs != nil {
+		if attestation.PCRValues.PCRs == nil {
+			attestation.PCRValues.PCRs = make(map[string]string)
+		}
+
+		for pcrIndex, currentValue := range currentPCRs.PCRs {
+			// Only update if stored value is empty (re-enrollment mode)
+			if storedValue, exists := attestation.PCRValues.PCRs[pcrIndex]; !exists || storedValue == "" {
+				attestation.PCRValues.PCRs[pcrIndex] = currentValue
+				logger.Info("Updated PCR value during selective enrollment", "pcr", pcrIndex)
+				updated = true
+			}
+		}
+	}
+
+	if updated {
+		// Update timestamps
+		now := metav1.Now()
+		attestation.LastVerifiedAt = &now
+		logger.Info("Selective enrollment update completed")
+	}
+
+	return nil
+}
+
+// createInitialTOFUAttestation creates attestation spec for initial TOFU enrollment, storing ALL provided PCRs
+func createInitialTOFUAttestation(currentAK *attest.AttestationParameters, currentPCRs *keyserverv1alpha1.PCRValues, logger logr.Logger) *keyserverv1alpha1.AttestationSpec {
+	currentTime := metav1.Now()
+
+	attestation := &keyserverv1alpha1.AttestationSpec{
+		EnrolledAt:     &currentTime,
+		LastVerifiedAt: &currentTime,
+	}
+
+	// Store AK if provided
+	if currentAK != nil {
+		if akPEM, err := encodeAKToPEM(currentAK); err == nil {
+			attestation.AKPublicKey = akPEM
+			logger.Info("Stored AK public key for initial TOFU enrollment")
+		} else {
+			logger.Error(err, "Failed to encode AK during TOFU enrollment")
+		}
+	}
+
+	// Store ALL provided PCRs without filtering
+	if currentPCRs != nil && currentPCRs.PCRs != nil {
+		attestation.PCRValues = &keyserverv1alpha1.PCRValues{
+			PCRs: make(map[string]string),
+		}
+
+		// Copy all PCRs - don't filter any out
+		for pcrIndex, pcrValue := range currentPCRs.PCRs {
+			attestation.PCRValues.PCRs[pcrIndex] = pcrValue
+		}
+
+		logger.Info("Stored ALL PCR values for initial TOFU enrollment",
+			"pcrCount", len(attestation.PCRValues.PCRs),
+			"pcrs", attestation.PCRValues.PCRs)
+	}
+
+	return attestation
+}
+
+// establishAttestationConnection upgrades HTTP to WebSocket and extracts partition info
+func establishAttestationConnection(w http.ResponseWriter, r *http.Request, logger logr.Logger) (*websocket.Conn, PartitionInfo, error) {
+	logger.V(1).Info("Debug: Attempting to upgrade HTTP connection to WebSocket", "remoteAddr", r.RemoteAddr)
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		logger.Error(err, "upgrading connection for TPM attestation")
+		return nil, PartitionInfo{}, err
+	}
+
+	logger.Info("Starting TPM attestation WebSocket flow")
+
+	// Get partition details from headers (sent by client)
+	partition := PartitionInfo{
+		Label:      r.Header.Get("label"),
+		DeviceName: r.Header.Get("name"),
+		UUID:       r.Header.Get("uuid"),
+	}
+	logger.Info("Partition details from client", "label", partition.Label, "name", partition.DeviceName, "uuid", partition.UUID)
+
+	return conn, partition, nil
+}
+
+// performTPMAuthentication proves the client possesses the TPM hardware by performing
+// cryptographic challenge-response authentication. This prevents TPM impersonation attacks
+// where an attacker has public keys but lacks access to the actual TPM chip with private keys.
+// Returns authenticated TPM data and hash for secure enrollment decisions.
+func performTPMAuthentication(conn *websocket.Conn, logger logr.Logger) (*ClientAttestation, string, error) {
+	// Protocol Step 1: Receive client's EK and AK attestation data
+	logger.Info("Waiting for client attestation data")
+	var clientData struct {
+		EKBytes []byte `json:"ek_bytes"`
+		AKBytes []byte `json:"ak_bytes"`
+	}
+	if err := conn.ReadJSON(&clientData); err != nil {
+		errorMessage(conn, logger, fmt.Errorf("reading attestation data: %w", err), "WebSocket read")
+		return nil, "", fmt.Errorf("reading attestation data: %w", err)
+	}
+	logger.Info("Received attestation data from client")
+
+	// Decode EK from PEM bytes
+	ek, err := tpm.DecodeEK(clientData.EKBytes)
+	if err != nil {
+		errorMessage(conn, logger, fmt.Errorf("decoding EK from PEM: %w", err), "EK decode")
+		return nil, "", fmt.Errorf("decoding EK from PEM: %w", err)
+	}
+	logger.Info("Successfully decoded EK from client")
+
+	// Decode AK parameters from JSON bytes
+	var akParams attest.AttestationParameters
+	if err := json.Unmarshal(clientData.AKBytes, &akParams); err != nil {
+		errorMessage(conn, logger, fmt.Errorf("unmarshaling AK parameters: %w", err), "AK decode")
+		return nil, "", fmt.Errorf("unmarshaling AK parameters: %w", err)
+	}
+	logger.Info("Successfully decoded AK from client")
+
+	// Get TPM hash for lookup/enrollment decisions
+	tpmHash, err := tpm.DecodePubHash(ek)
+	if err != nil {
+		errorMessage(conn, logger, fmt.Errorf("computing TPM hash: %w", err), "TPM hash")
+		return nil, "", fmt.Errorf("computing TPM hash: %w", err)
+	}
+	logger.Info("Client TPM hash", "hash", tpmHash)
+
+	// Protocol Step 2: Generate challenge using go-attestation
+	logger.Info("Generating TPM attestation challenge")
+	secret, challengeBytes, err := tpm.GenerateChallenge(ek, &akParams)
+	if err != nil {
+		errorMessage(conn, logger, fmt.Errorf("generating challenge: %w", err), "Challenge generation")
+		return nil, "", fmt.Errorf("generating challenge: %w", err)
+	}
+
+	// Protocol Step 3: Send challenge to client
+	var challenge struct {
+		EC *attest.EncryptedCredential `json:"EC"`
+	}
+	if err := json.Unmarshal(challengeBytes, &challenge); err != nil {
+		errorMessage(conn, logger, fmt.Errorf("unmarshaling challenge: %w", err), "Challenge unmarshal")
+		return nil, "", fmt.Errorf("unmarshaling challenge: %w", err)
+	}
+
+	challengeResp := tpm.AttestationChallengeResponse{
+		Challenge: challenge.EC,
+		Enrolled:  false, // Will be determined later in enrollment context
+	}
+
+	logger.Info("Sending challenge to client")
+	if err := conn.WriteJSON(challengeResp); err != nil {
+		errorMessage(conn, logger, fmt.Errorf("sending challenge: %w", err), "Challenge send")
+		return nil, "", fmt.Errorf("sending challenge: %w", err)
+	}
+
+	// Protocol Step 4: Receive proof from client
+	logger.Info("Waiting for client proof response")
+	var proofReq tpm.ProofRequest
+	if err := conn.ReadJSON(&proofReq); err != nil {
+		errorMessage(conn, logger, fmt.Errorf("reading proof request: %w", err), "Proof read")
+		return nil, "", fmt.Errorf("reading proof request: %w", err)
+	}
+	logger.Info("Received proof from client")
+
+	// Protocol Step 5: Verify proof
+	logger.Info("Validating challenge response")
+	respBytes, err := json.Marshal(tpm.ChallengeResponse{Secret: proofReq.Secret})
+	if err != nil {
+		errorMessage(conn, logger, fmt.Errorf("marshaling response for validation: %w", err), "Response marshal")
+		return nil, "", fmt.Errorf("marshaling response for validation: %w", err)
+	}
+
+	if err := tpm.ValidateChallenge(secret, respBytes); err != nil {
+		logger.Error(err, "Challenge validation failed")
+		securityRejection(conn, logger, "Challenge validation failed", err.Error())
+		return nil, "", fmt.Errorf("challenge validation failed: %w", err)
+	}
+	logger.Info("Challenge validation successful")
+
+	// Extract PCR values if provided
+	var currentPCRs *keyserverv1alpha1.PCRValues
+	if len(proofReq.PCRQuote) > 0 {
+		logger.Info("Extracting PCR values from quote")
+		pcrVals, err := extractPCRValues(proofReq.PCRQuote)
+		if err != nil {
+			logger.Error(err, "Failed to extract PCR values from quote")
+			// PCR extraction failure is non-fatal for authentication
+		} else {
+			currentPCRs = pcrVals
+		}
+	} else {
+		logger.Info("No PCR quote provided by client")
+	}
+
+	// Return authenticated client data
+	clientAttestation := &ClientAttestation{
+		EK:        ek,
+		AK:        &akParams,
+		PCRValues: currentPCRs,
+		PCRQuote:  proofReq.PCRQuote,
+	}
+
+	return clientAttestation, tpmHash, nil
+}
+
+// determineEnrollmentContext checks for existing enrollment and creates context
+func determineEnrollmentContext(reconciler *controllers.SealedVolumeReconciler, namespace, tpmHash string, partition PartitionInfo, logger logr.Logger) (*EnrollmentContext, error) {
+	requestData := PassphraseRequestData{
+		TPMHash:    tpmHash,
+		Label:      partition.Label,
+		DeviceName: partition.DeviceName,
+		UUID:       partition.UUID,
+	}
+
+	volumeList := &keyserverv1alpha1.SealedVolumeList{}
+	err := reconciler.List(context.TODO(), volumeList, client.InNamespace(namespace))
+	if err != nil {
+		return nil, fmt.Errorf("listing sealed volumes: %w", err)
+	}
+
+	existingVolume, existingSealedVolume := findVolumeFor(requestData, volumeList)
+	isNewEnrollment := existingVolume == nil
+
+	logger.Info("Determined enrollment context",
+		"isNewEnrollment", isNewEnrollment,
+		"tpmHash", tpmHash,
+		"partitionLabel", partition.Label,
+		"foundVolumes", len(volumeList.Items))
+
+	return &EnrollmentContext{
+		IsNewEnrollment: isNewEnrollment,
+		SealedVolume:    existingSealedVolume,
+		VolumeData:      existingVolume,
+		TPMHash:         tpmHash,
+		Partition:       partition,
+	}, nil
 }
