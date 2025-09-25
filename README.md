@@ -27,7 +27,7 @@ With Kairos you can build immutable, bootable Kubernetes and OS images for your 
 <tr>
 <th align="center">
 <img width="640" height="1px">
-<p> 
+<p>
 <small>
 Documentation
 </small>
@@ -35,7 +35,7 @@ Documentation
 </th>
 <th align="center">
 <img width="640" height="1">
-<p> 
+<p>
 <small>
 Contribute
 </small>
@@ -46,12 +46,12 @@ Contribute
 <td>
 
  📚 [Getting started with Kairos](https://kairos.io/docs/getting-started) <br> :bulb: [Examples](https://kairos.io/docs/examples) <br> :movie_camera: [Video](https://kairos.io/docs/media/) <br> :open_hands:[Engage with the Community](https://kairos.io/community/)
-  
+
 </td>
 <td>
-  
-🙌[ CONTRIBUTING.md ]( https://github.com/kairos-io/kairos/blob/master/CONTRIBUTING.md ) <br> :raising_hand: [ GOVERNANCE ]( https://github.com/kairos-io/kairos/blob/master/GOVERNANCE.md ) <br>:construction_worker:[Code of conduct](https://github.com/kairos-io/kairos/blob/master/CODE_OF_CONDUCT.md) 
-  
+
+🙌[ CONTRIBUTING.md ]( https://github.com/kairos-io/kairos/blob/master/CONTRIBUTING.md ) <br> :raising_hand: [ GOVERNANCE ]( https://github.com/kairos-io/kairos/blob/master/GOVERNANCE.md ) <br>:construction_worker:[Code of conduct](https://github.com/kairos-io/kairos/blob/master/CODE_OF_CONDUCT.md)
+
 </td>
 </tr>
 </table>
@@ -59,7 +59,7 @@ Contribute
 | :exclamation: | This is experimental! |
 |-|:-|
 
-This is the Kairos kcrypt-challenger Kubernetes Native Extension. 
+This is the Kairos kcrypt-challenger Kubernetes Native Extension.
 
 ## Usage
 
@@ -100,7 +100,7 @@ To install, use helm:
 # Adds the kairos repo to helm
 $ helm repo add kairos https://kairos-io.github.io/helm-charts
 "kairos" has been added to your repositories
-$ helm repo update                                        
+$ helm repo update
 Hang tight while we grab the latest from your chart repositories...
 ...Successfully got an update from the "kairos" chart repository
 Update Complete. ⎈Happy Helming!⎈
@@ -118,18 +118,108 @@ TEST SUITE: None
 $ helm install kairos-challenger kairos/kcrypt-challenger
 ```
 
+## Remote Attestation Flow
+
+The kcrypt-challenger implements a secure TPM-based remote attestation flow for disk encryption key management. The following diagram illustrates the complete attestation process:
+
+```mermaid
+sequenceDiagram
+    participant TPM as TPM Hardware
+    participant Client as TPM Client<br/>(Kairos Node)
+    participant Challenger as Kcrypt Challenger<br/>(Server)
+    participant K8s as Kubernetes API<br/>(SealedVolume/Secret)
+
+    Note over TPM,Client: Client Boot Process
+    Client->>TPM: Extract EK (Endorsement Key)
+    Client->>TPM: Generate AK (Attestation Key)
+    Client->>TPM: Read PCR Values (Boot State)
+
+    Note over Client,Challenger: 1. Connection Establishment
+    Client->>Challenger: WebSocket connection with partition info<br/>(label, device, UUID)
+    Challenger->>Client: Connection established
+
+    Note over Client,Challenger: 2. TPM Authentication (Challenge-Response)
+    Client->>Challenger: Send EK + AK attestation data
+    Challenger->>Challenger: Decode EK/AK, compute TPM hash
+    Challenger->>Challenger: Generate cryptographic challenge
+    Challenger->>Client: Send challenge (encrypted with EK)
+    Client->>TPM: Decrypt challenge using private EK
+    Client->>TPM: Sign response using private AK
+    Client->>Challenger: Send proof response + PCR quote
+    Challenger->>Challenger: Verify challenge response
+
+    Note over Challenger,K8s: 3. Enrollment Context Determination
+    Challenger->>K8s: List SealedVolumes by TPM hash
+    K8s->>Challenger: Return existing volumes (if any)
+
+    alt New Enrollment (TOFU - Trust On First Use)
+        Note over Challenger,K8s: 4a. Initial TOFU Enrollment
+        Challenger->>Challenger: Skip attestation verification (TOFU)
+        Challenger->>Challenger: Generate secure passphrase
+        Challenger->>K8s: Create/reuse Kubernetes Secret
+        Challenger->>Challenger: Create attestation spec (store ALL PCRs)
+        Challenger->>K8s: Create SealedVolume with attestation data
+        K8s->>Challenger: Confirm resource creation
+    else Existing Enrollment
+        Note over Challenger,K8s: 4b. Selective Verification & Re-enrollment
+        Challenger->>Challenger: Check if TPM is quarantined
+        alt TPM Quarantined
+            Challenger->>Client: Security rejection (access denied)
+        else TPM Not Quarantined
+            Note over Challenger: Selective Attestation Verification
+            Challenger->>Challenger: Verify AK using selective enrollment:<br/>• Empty AK = re-enrollment mode (accept any)<br/>• Set AK = enforcement mode (exact match)
+            Challenger->>Challenger: Verify PCRs using selective enrollment:<br/>• Empty PCR = re-enrollment mode (accept + update)<br/>• Set PCR = enforcement mode (exact match)<br/>• Omitted PCR = skip verification entirely
+            alt Verification Failed
+                Challenger->>Client: Security rejection (attestation failed)
+            else Verification Passed
+                Challenger->>Challenger: Update empty fields with current values
+                Challenger->>K8s: Update SealedVolume (if changes made)
+            end
+        end
+    end
+
+    Note over Challenger,K8s: 5. Passphrase Retrieval & Delivery
+    Challenger->>K8s: Get Kubernetes Secret by name/path
+    K8s->>Challenger: Return encrypted passphrase
+    Challenger->>Client: Send passphrase securely
+
+    Note over TPM,Client: 6. Disk Decryption
+    Client->>Client: Use passphrase to decrypt disk partition
+    Client->>Challenger: Close WebSocket connection
+
+    Note over TPM,Client: Success - Node continues boot process
+```
+
+### Flow Explanation
+
+1. **Connection Establishment**: Client establishes WebSocket connection with partition metadata
+2. **TPM Authentication**: Cryptographic challenge-response proves client controls the TPM hardware
+3. **Enrollment Determination**: Server checks if this TPM is already enrolled
+4. **Security Verification**:
+   - **TOFU**: New TPMs are automatically enrolled (Trust On First Use)
+   - **Selective Enrollment**: Existing TPMs undergo flexible verification based on field states
+5. **Passphrase Delivery**: Encrypted disk passphrase is securely delivered to authenticated client
+
+### Selective Enrollment States
+
+| Field State | Verification | Updates | Use Case |
+|-------------|-------------|---------|----------|
+| **Empty** (`""`) | ✅ Accept any value | ✅ Update with current | Re-learn after TPM/firmware changes |
+| **Set** (`"abc123"`) | ✅ Enforce exact match | ❌ No updates | Strict security enforcement |
+| **Omitted** (deleted) | ❌ Skip entirely | ❌ Never re-enrolled | Ignore volatile PCRs (e.g., PCR 11) |
+
 ## Selective Enrollment Mode for TPM Attestation
 
 The kcrypt-challenger implements a sophisticated "selective enrollment mode" that solves operational challenges in real-world TPM-based disk encryption deployments. This feature provides flexible attestation management while maintaining strong security guarantees.
 
 ### Key Features
 
-✅ **Implemented**: Full selective enrollment with three field states (empty, set, omitted)
-✅ **Implemented**: Trust On First Use (TOFU) automatic enrollment
-✅ **Implemented**: Secret reuse after SealedVolume recreation  
-✅ **Implemented**: PCR re-enrollment for kernel upgrades
-✅ **Implemented**: PCR omission for volatile boot stages
-✅ **Implemented**: Early quarantine checking with fail-fast behavior
+- Full selective enrollment with three field states (empty, set, omitted)
+- Trust On First Use (TOFU) automatic enrollment
+- Secret reuse after SealedVolume recreation
+- PCR re-enrollment for kernel upgrades
+- PCR omission for volatile boot stages
+- Early quarantine checking with fail-fast behavior
 
 ### How Selective Enrollment Works
 
@@ -142,7 +232,7 @@ The system supports two distinct enrollment behaviors:
 
 #### **Selective Re-enrollment** (SealedVolume exists with specific fields)
 - **Empty values** (`""`) = Accept any value, update the stored value (re-enrollment mode)
-- **Set values** (`"abc123..."`) = Enforce exact match (enforcement mode)  
+- **Set values** (`"abc123..."`) = Enforce exact match (enforcement mode)
 - **Omitted fields** = Skip verification entirely (ignored mode)
 
 **Selective Enrollment Behavior Summary:**
@@ -170,7 +260,7 @@ spec:
     pcrValues:
       pcrs:
         "0": "abc123..."         # All received PCRs stored
-        "7": "def456..."        
+        "7": "def456..."
         "11": "ghi789..."        # Including PCR 11 if provided
 ```
 
@@ -242,7 +332,7 @@ kubectl get secret my-encrypted-volume-encrypted-data
 # pcrValues:
 #   pcrs:
 #     "0": "abc123..."
-#     "7": "def456..."  
+#     "7": "def456..."
 #     "11": "ghi789..."
 
 # 2. Operator edits SealedVolume to remove PCR 11 entirely
@@ -284,7 +374,7 @@ spec:
         path: "passphrase"
   attestation:
     ekPublicKey: ""          # Re-enrollment mode
-    akPublicKey: ""          # Re-enrollment mode  
+    akPublicKey: ""          # Re-enrollment mode
     pcrValues:
       pcrs:
         "0": ""              # Re-enrollment mode (will learn)
@@ -352,7 +442,7 @@ kubectl edit sealedvolume my-volume
 # Temporarily allow PCR re-enrollment (e.g., before kernel upgrade)
 kubectl patch sealedvolume my-volume --type='merge' -p='{"spec":{"attestation":{"pcrValues":{"pcrs":{"11":""}}}}}'
 
-# Re-learn a PCR after hardware change (e.g., PCR 0 after BIOS update)  
+# Re-learn a PCR after hardware change (e.g., PCR 0 after BIOS update)
 kubectl patch sealedvolume my-volume --type='merge' -p='{"spec":{"attestation":{"pcrValues":{"pcrs":{"0":""}}}}}'
 
 # Re-learn AK after TPM replacement
@@ -442,7 +532,7 @@ The selective enrollment implementation is complete, but comprehensive E2E tests
 
 All E2E tests must pass consistently across:
 - Different hardware configurations (various TPM chips)
-- Multiple kernel versions (to test PCR 11 variability) 
+- Multiple kernel versions (to test PCR 11 variability)
 - Various cluster configurations (single-node, multi-node)
 - Different load conditions (single client, concurrent clients)
 
