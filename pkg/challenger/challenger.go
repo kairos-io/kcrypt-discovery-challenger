@@ -21,6 +21,7 @@ import (
 	"github.com/kairos-io/kairos-challenger/controllers"
 	tpm "github.com/kairos-io/tpm-helpers"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -121,8 +122,10 @@ func generateTOFUPassphrase() (string, error) {
 	return passphrase, nil
 }
 
-// createTOFUSecret creates a Kubernetes secret containing the generated passphrase
-func createTOFUSecret(kclient *kubernetes.Clientset, namespace, secretName, secretPath, passphrase string) error {
+// createOrReuseTOFUSecret creates a Kubernetes secret containing the generated passphrase
+// If a secret with the same name already exists, it returns the existing passphrase
+// Returns the passphrase that should be used (either new or existing)
+func createOrReuseTOFUSecret(kclient *kubernetes.Clientset, namespace, secretName, secretPath, passphrase string, logger logr.Logger) (string, error) {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
@@ -136,10 +139,29 @@ func createTOFUSecret(kclient *kubernetes.Clientset, namespace, secretName, secr
 
 	_, err := kclient.CoreV1().Secrets(namespace).Create(context.TODO(), secret, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("creating TOFU secret: %w", err)
+		if errors.IsAlreadyExists(err) {
+			// Secret exists - this can happen when a SealedVolume was deleted but secret remained
+			// Retrieve and return the existing passphrase
+			logger.Info("Secret already exists, reusing existing secret", "secretName", secretName, "reason", "previous SealedVolume may have been deleted")
+
+			existingSecret, getErr := kclient.CoreV1().Secrets(namespace).Get(context.TODO(), secretName, metav1.GetOptions{})
+			if getErr != nil {
+				return "", fmt.Errorf("retrieving existing secret: %w", getErr)
+			}
+
+			existingPassphrase, exists := existingSecret.Data[secretPath]
+			if !exists || len(existingPassphrase) == 0 {
+				return "", fmt.Errorf("existing secret does not contain expected passphrase data at path %s", secretPath)
+			}
+
+			logger.Info("Successfully retrieved passphrase from existing secret", "secretName", secretName)
+			return string(existingPassphrase), nil
+		}
+		return "", fmt.Errorf("creating TOFU secret: %w", err)
 	}
 
-	return nil
+	logger.Info("Successfully created new TOFU secret", "secretName", secretName)
+	return passphrase, nil
 }
 
 // createTOFUSealedVolumeWithPCRs creates a SealedVolume resource for automatic TOFU enrollment with PCR values
@@ -639,8 +661,10 @@ func performInitialEnrollment(ctx *EnrollmentContext, attestation *ClientAttesta
 		return fmt.Errorf("generating TOFU passphrase: %w", err)
 	}
 
-	// Create Kubernetes secret
-	if err := createTOFUSecret(kclient, namespace, secretName, secretPath, passphrase); err != nil {
+	// Create Kubernetes secret (or reuse if it already exists from a previous enrollment)
+	logger.Info("Creating TOFU secret", "secretName", secretName, "secretPath", secretPath)
+	actualPassphrase, err := createOrReuseTOFUSecret(kclient, namespace, secretName, secretPath, passphrase, logger)
+	if err != nil {
 		return fmt.Errorf("creating TOFU secret: %w", err)
 	}
 
@@ -668,7 +692,12 @@ func performInitialEnrollment(ctx *EnrollmentContext, attestation *ClientAttesta
 		PartitionLabel: volumeData.PartitionLabel,
 	}
 
-	logger.Info("TOFU enrollment completed", "secretName", secretName, "secretPath", secretPath)
+	logger.Info("TOFU enrollment completed", "secretName", secretName, "secretPath", secretPath, "passphraseSource", func() string {
+		if actualPassphrase == passphrase {
+			return "newly_generated"
+		}
+		return "reused_existing"
+	}())
 	return nil
 }
 
@@ -1011,8 +1040,9 @@ func updateAttestationDataSelective(attestation *keyserverv1alpha1.AttestationSp
 		}
 
 		for pcrIndex, currentValue := range currentPCRs.PCRs {
-			// Only update if stored value is empty (re-enrollment mode)
-			if storedValue, exists := attestation.PCRValues.PCRs[pcrIndex]; !exists || storedValue == "" {
+			// Only update if stored value exists AND is empty (re-enrollment mode)
+			// Omitted PCRs (not in the map) should be skipped entirely per spec
+			if storedValue, exists := attestation.PCRValues.PCRs[pcrIndex]; exists && storedValue == "" {
 				attestation.PCRValues.PCRs[pcrIndex] = currentValue
 				logger.Info("Updated PCR value during selective enrollment", "pcr", pcrIndex)
 				updated = true
