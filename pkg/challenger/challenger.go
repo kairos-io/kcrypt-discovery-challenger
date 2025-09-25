@@ -614,13 +614,19 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 		return
 	}
 
-	// 4. Verify attestation data using selective enrollment
+	// 4. Check if TPM is quarantined (reject immediately if so)
+	if !enrollmentContext.IsNewEnrollment && enrollmentContext.VolumeData != nil && enrollmentContext.VolumeData.Quarantined {
+		securityRejection(conn, logger, "TPM quarantined", "Access denied due to previous security violations")
+		return
+	}
+
+	// 5. Verify attestation data using selective enrollment
 	if err := verifyAttestationData(enrollmentContext, clientAttestation, logger); err != nil {
 		securityRejection(conn, logger, "Attestation verification failed", err.Error())
 		return
 	}
 
-	// 5. Handle enrollment: initial enrollment for new TPMs or re-enrollment updates for existing ones
+	// 6. Handle enrollment: initial enrollment for new TPMs or re-enrollment updates for existing ones
 	if enrollmentContext.IsNewEnrollment {
 		// Perform initial TOFU enrollment for new TPMs
 		if err := performInitialEnrollment(enrollmentContext, clientAttestation, reconciler, kclient, namespace, logger); err != nil {
@@ -635,7 +641,7 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 		}
 	}
 
-	// 6. Retrieve and send passphrase
+	// 7. Retrieve and send passphrase
 	if err := sendPassphrase(conn, enrollmentContext, kclient, namespace, logger); err != nil {
 		errorMessage(conn, logger, err, "Passphrase delivery")
 		return
@@ -711,11 +717,6 @@ func verifyAttestationData(ctx *EnrollmentContext, attestation *ClientAttestatio
 
 	// For existing enrollments, perform security verification
 	logger.Info("Existing enrollment - performing security verification")
-
-	// Check if TPM is quarantined
-	if ctx.VolumeData.Quarantined {
-		return fmt.Errorf("TPM quarantined - access denied due to previous security violations")
-	}
 
 	// Verify AK public key matches the enrolled one using selective enrollment
 	if err := verifyAKMatchSelective(ctx.SealedVolume, attestation.AK, logger); err != nil {
