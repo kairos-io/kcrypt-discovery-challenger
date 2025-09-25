@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path"
 	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/google/uuid"
@@ -231,4 +233,301 @@ func getFreePort() (port int, err error) {
 		}
 	}
 	return
+}
+
+// ========================================
+// Common Test Helper Functions
+// ========================================
+
+// Helper to install Kairos with given config
+func installKairosWithConfig(vm VM, config string) {
+	configFile, err := os.CreateTemp("", "")
+	Expect(err).ToNot(HaveOccurred())
+	defer os.Remove(configFile.Name())
+
+	err = os.WriteFile(configFile.Name(), []byte(config), 0744)
+	Expect(err).ToNot(HaveOccurred())
+
+	err = vm.Scp(configFile.Name(), "config.yaml", "0744")
+	Expect(err).ToNot(HaveOccurred())
+
+	By("Installing Kairos with config")
+	installationOutput, err := vm.Sudo("/bin/bash -c 'set -o pipefail && kairos-agent manual-install --device auto config.yaml 2>&1 | tee manual-install.txt'")
+	Expect(err).ToNot(HaveOccurred(), installationOutput)
+}
+
+// Helper to reboot and wait for connection
+func rebootAndConnect(vm VM) {
+	By("Rebooting VM")
+	vm.Reboot()
+	By("Waiting for VM to be connectable")
+	vm.EventuallyConnects(1200)
+}
+
+// Helper to verify encrypted partition exists
+func verifyEncryptedPartition(vm VM) {
+	By("Verifying encrypted partition exists")
+	out, err := vm.Sudo("blkid")
+	Expect(err).ToNot(HaveOccurred(), out)
+	Expect(out).To(MatchRegexp("TYPE=\"crypto_LUKS\" PARTLABEL=\"persistent\""), out)
+	Expect(out).To(MatchRegexp("/dev/mapper.*LABEL=\"COS_PERSISTENT\""), out)
+}
+
+// Helper to get TPM hash from VM
+func getTPMHash(vm VM) string {
+	By("Getting TPM hash from VM")
+	hash, err := vm.Sudo("/system/discovery/kcrypt-discovery-challenger")
+	Expect(err).ToNot(HaveOccurred(), hash)
+	return strings.TrimSpace(hash)
+}
+
+// Helper to test passphrase retrieval via CLI (returns true if successful, false if failed)
+func checkPassphraseRetrieval(vm VM, partitionLabel string) bool {
+	By(fmt.Sprintf("Testing passphrase retrieval for partition %s via CLI", partitionLabel))
+
+	// Configure the CLI to use the challenger server
+	cliCmd := fmt.Sprintf(`/system/discovery/kcrypt-discovery-challenger get \
+	  --partition-label=%s \
+	  --challenger-server="http://%s" \
+	  2>/dev/null`, partitionLabel, os.Getenv("KMS_ADDRESS"))
+
+	out, err := vm.Sudo(cliCmd)
+	if err != nil {
+		By(fmt.Sprintf("Passphrase retrieval failed: %v", err))
+		return false
+	}
+
+	// Check if we got a passphrase (non-empty output)
+	passphrase := strings.TrimSpace(out)
+	success := len(passphrase) > 0
+
+	if success {
+		By("Passphrase retrieval successful")
+	} else {
+		By("Passphrase retrieval failed - empty response")
+	}
+
+	return success
+}
+
+// Helper to test passphrase retrieval with expectation (for cleaner test logic)
+func expectPassphraseRetrieval(vm VM, partitionLabel string, shouldSucceed bool) {
+	success := checkPassphraseRetrieval(vm, partitionLabel)
+	if shouldSucceed {
+		Expect(success).To(BeTrue(), "Passphrase retrieval should have succeeded")
+	} else {
+		Expect(success).To(BeFalse(), "Passphrase retrieval should have failed")
+	}
+}
+
+// Helper to create SealedVolume with specific attestation configuration
+func createSealedVolumeWithAttestation(tpmHash string, attestationConfig map[string]interface{}) {
+	sealedVolumeYaml := fmt.Sprintf(`---
+apiVersion: keyserver.kairos.io/v1alpha1
+kind: SealedVolume
+metadata:
+  name: "%s"
+  namespace: default
+spec:
+  TPMHash: "%s"
+  partitions:
+    - label: COS_PERSISTENT
+  quarantined: false`, tpmHash, tpmHash)
+
+	if attestationConfig != nil {
+		sealedVolumeYaml += "\n  attestation:"
+		for key, value := range attestationConfig {
+			switch v := value.(type) {
+			case string:
+				sealedVolumeYaml += fmt.Sprintf("\n    %s: \"%s\"", key, v)
+			case map[string]string:
+				sealedVolumeYaml += fmt.Sprintf("\n    %s:", key)
+				for k, val := range v {
+					sealedVolumeYaml += "\n      pcrs:"
+					sealedVolumeYaml += fmt.Sprintf("\n        \"%s\": \"%s\"", k, val)
+				}
+			}
+		}
+	}
+
+	By(fmt.Sprintf("Creating SealedVolume with attestation config: %+v", attestationConfig))
+	kubectlApplyYaml(sealedVolumeYaml)
+}
+
+// Helper to update SealedVolume attestation configuration
+func updateSealedVolumeAttestation(tpmHashParam string, field, value string) {
+	By(fmt.Sprintf("Updating SealedVolume %s field %s to %s", tpmHashParam, field, value))
+	patch := fmt.Sprintf(`{"spec":{"attestation":{"%s":"%s"}}}`, field, value)
+	cmd := exec.Command("kubectl", "patch", "sealedvolume", tpmHashParam, "--type=merge", "-p", patch)
+	out, err := cmd.CombinedOutput()
+	Expect(err).ToNot(HaveOccurred(), string(out))
+}
+
+// Helper to quarantine TPM
+func quarantineTPM(tpmHash string) {
+	By(fmt.Sprintf("Quarantining TPM %s", tpmHash))
+	patch := `{"spec":{"quarantined":true}}`
+	cmd := exec.Command("kubectl", "patch", "sealedvolume", tpmHash, "--type=merge", "-p", patch)
+	out, err := cmd.CombinedOutput()
+	Expect(err).ToNot(HaveOccurred(), string(out))
+}
+
+// Helper to unquarantine TPM
+func unquarantineTPM(tpmHashParam string) {
+	By(fmt.Sprintf("Unquarantining TPM %s", tpmHashParam))
+	patch := `{"spec":{"quarantined":false}}`
+	cmd := exec.Command("kubectl", "patch", "sealedvolume", tpmHashParam, "--type=merge", "-p", patch)
+	out, err := cmd.CombinedOutput()
+	Expect(err).ToNot(HaveOccurred(), string(out))
+}
+
+// Helper to delete SealedVolume
+func deleteSealedVolume(tmpHashParam string) {
+	By(fmt.Sprintf("Deleting SealedVolume %s", tmpHashParam))
+	cmd := exec.Command("kubectl", "delete", "sealedvolume", tmpHashParam, "--ignore-not-found=true")
+	out, err := cmd.CombinedOutput()
+	Expect(err).ToNot(HaveOccurred(), string(out))
+}
+
+// Helper to delete SealedVolume from all namespaces
+func deleteSealedVolumeAllNamespaces(tpmHashParam string) {
+	By(fmt.Sprintf("Deleting SealedVolume %s from all namespaces", tpmHashParam))
+	cmd := exec.Command("kubectl", "delete", "sealedvolume", tpmHashParam, "--ignore-not-found=true", "--all-namespaces")
+	out, err := cmd.CombinedOutput()
+	Expect(err).ToNot(HaveOccurred(), string(out))
+}
+
+// Helper to check if secret exists
+func secretExists(secretName string) bool {
+	cmd := exec.Command("kubectl", "get", "secret", secretName, "--ignore-not-found=true")
+	out, err := cmd.CombinedOutput()
+	return err == nil && len(out) > 0 && !strings.Contains(string(out), "NotFound")
+}
+
+// Helper to check if secret exists in namespace
+func secretExistsInNamespace(secretName, namespace string) bool {
+	cmd := exec.Command("kubectl", "get", "secret", secretName, "-n", namespace, "--ignore-not-found=true")
+	out, err := cmd.CombinedOutput()
+	return err == nil && len(out) > 0 && !strings.Contains(string(out), "NotFound")
+}
+
+// Helper to apply YAML to Kubernetes
+func kubectlApplyYaml(yamlData string) {
+	yamlFile, err := os.CreateTemp("", "")
+	Expect(err).ToNot(HaveOccurred())
+	defer os.Remove(yamlFile.Name())
+
+	err = os.WriteFile(yamlFile.Name(), []byte(yamlData), 0744)
+	Expect(err).ToNot(HaveOccurred())
+
+	cmd := exec.Command("kubectl", "apply", "-f", yamlFile.Name())
+	out, err := cmd.CombinedOutput()
+	Expect(err).ToNot(HaveOccurred(), string(out))
+}
+
+// Helper to create SealedVolume with multi-partition configuration
+func createMultiPartitionSealedVolume(tpmHash string, partitions []string) {
+	sealedVolumeYaml := fmt.Sprintf(`---
+apiVersion: keyserver.kairos.io/v1alpha1
+kind: SealedVolume
+metadata:
+  name: "%s"
+  namespace: default
+spec:
+  TPMHash: "%s"
+  partitions:`, tpmHash, tpmHash)
+
+	for _, partition := range partitions {
+		sealedVolumeYaml += fmt.Sprintf(`
+    - label: %s`, partition)
+	}
+
+	sealedVolumeYaml += "\n  quarantined: false"
+
+	By(fmt.Sprintf("Creating multi-partition SealedVolume for partitions: %v", partitions))
+	kubectlApplyYaml(sealedVolumeYaml)
+}
+
+// Helper to create SealedVolume in specific namespace
+func createSealedVolumeInNamespace(tpmHash, namespace string) {
+	// First create the namespace if it doesn't exist
+	kubectlApplyYaml(fmt.Sprintf(`---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: %s`, namespace))
+
+	sealedVolumeYaml := fmt.Sprintf(`---
+apiVersion: keyserver.kairos.io/v1alpha1
+kind: SealedVolume
+metadata:
+  name: "%s"
+  namespace: %s
+spec:
+  TPMHash: "%s"
+  partitions:
+    - label: COS_PERSISTENT
+  quarantined: false`, tpmHash, namespace, tpmHash)
+
+	By(fmt.Sprintf("Creating SealedVolume in namespace %s", namespace))
+	kubectlApplyYaml(sealedVolumeYaml)
+}
+
+// Helper to cleanup test resources
+func cleanupTestResources(tpmHash string) {
+	if tpmHash != "" {
+		deleteSealedVolumeAllNamespaces(tpmHash)
+
+		// Cleanup associated secrets in all namespaces
+		cmd := exec.Command("kubectl", "delete", "secret", tpmHash, "--ignore-not-found=true", "--all-namespaces")
+		cmd.CombinedOutput()
+
+		cmd = exec.Command("kubectl", "delete", "secret", fmt.Sprintf("%s-cos-persistent", tpmHash), "--ignore-not-found=true", "--all-namespaces")
+		cmd.CombinedOutput()
+
+		// Cleanup test namespaces
+		cmd = exec.Command("kubectl", "delete", "namespace", "test-ns-1", "--ignore-not-found=true")
+		cmd.CombinedOutput()
+
+		cmd = exec.Command("kubectl", "delete", "namespace", "test-ns-2", "--ignore-not-found=true")
+		cmd.CombinedOutput()
+	}
+}
+
+// Helper to install Kairos with config (handles both success and failure cases)
+func installKairosWithConfigAdvanced(vm VM, config string, expectSuccess bool) {
+	configFile, err := os.CreateTemp("", "")
+	Expect(err).ToNot(HaveOccurred())
+	defer os.Remove(configFile.Name())
+
+	err = os.WriteFile(configFile.Name(), []byte(config), 0744)
+	Expect(err).ToNot(HaveOccurred())
+
+	err = vm.Scp(configFile.Name(), "config.yaml", "0744")
+	Expect(err).ToNot(HaveOccurred())
+
+	if expectSuccess {
+		By("Installing Kairos with config")
+		installationOutput, err := vm.Sudo("/bin/bash -c 'set -o pipefail && kairos-agent manual-install --device auto config.yaml 2>&1 | tee manual-install.txt'")
+		Expect(err).ToNot(HaveOccurred(), installationOutput)
+	} else {
+		By("Installing Kairos with config (expecting failure)")
+		vm.Sudo("/bin/bash -c 'set -o pipefail && kairos-agent manual-install --device auto config.yaml 2>&1 | tee manual-install.txt'")
+	}
+}
+
+// Helper to cleanup VM and TPM emulator
+func cleanupVM(vm VM) {
+	By("Cleaning up test VM")
+	err := vm.Destroy(func(vm VM) {
+		// Stop TPM emulator
+		tpmPID, err := os.ReadFile(path.Join(vm.StateDir, "tpm", "pid"))
+		if err == nil && len(tpmPID) != 0 {
+			pid, err := strconv.Atoi(string(tpmPID))
+			if err == nil {
+				syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+	Expect(err).ToNot(HaveOccurred())
 }

@@ -374,19 +374,6 @@ func printInstallationOutput(message string, callerSkip ...int) {
 	Fail(message, callerSkip[0]+1)
 }
 
-func kubectlApplyYaml(yamlData string) {
-	yamlFile, err := os.CreateTemp("", "")
-	Expect(err).ToNot(HaveOccurred())
-	defer os.Remove(yamlFile.Name())
-
-	err = os.WriteFile(yamlFile.Name(), []byte(yamlData), 0744)
-	Expect(err).ToNot(HaveOccurred())
-
-	cmd := exec.Command("kubectl", "apply", "-f", yamlFile.Name())
-	out, err := cmd.CombinedOutput()
-	Expect(err).ToNot(HaveOccurred(), out)
-}
-
 func getChallengerServerCert() string {
 	cmd := exec.Command(
 		"kubectl", "get", "secret", "-n", "default", "kms-tls",
