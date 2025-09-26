@@ -2,6 +2,7 @@ package client
 
 import (
 	"github.com/kairos-io/kairos-sdk/collector"
+	"github.com/kairos-io/kairos-sdk/types"
 	"gopkg.in/yaml.v3"
 )
 
@@ -10,10 +11,12 @@ import (
 // under `/oem`. When we are booting an installed system (in initramfs phase),
 // the path is `/sysroot/oem`.
 // When we run the challenger in hooks, we may have the config under /tmp/oem
-var confScanDirs = []string{"/oem", "/sysroot/oem", "/tmp/oem"}
+// During manual install (kairos-agent manual-install), kairos-agent stores config in /run/cos/oem
+var confScanDirs = []string{"/oem", "/sysroot/oem", "/tmp/oem", "/run/cos/oem"}
 
 type Client struct {
 	Config Config
+	Logger types.KairosLogger
 }
 
 type Config struct {

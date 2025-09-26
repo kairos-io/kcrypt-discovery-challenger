@@ -55,12 +55,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Basic encryption tests
           - label: "local-encryption"
           - label: "remote-auto"
           - label: "remote-static"
           - label: "remote-https-pinned"
           - label: "remote-https-bad-cert"
           - label: "discoverable-kms"
+          # Consolidated remote attestation workflow test
+          - label: "remote-complete-workflow"
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
