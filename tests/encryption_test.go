@@ -21,7 +21,7 @@ var installationOutput string
 var vm VM
 var mdnsVM VM
 
-var _ = Describe("kcrypt encryption", func() {
+var _ = Describe("kcrypt encryption", Label("encryption-tests"), func() {
 	var config string
 	var vmOpts VMOptions
 	var expectedInstallationSuccess bool
@@ -106,7 +106,8 @@ kcrypt:
 		})
 
 		AfterEach(func() {
-			cmd := exec.Command("kubectl", "delete", "sealedvolume", tpmHash)
+			sealedVolumeName := getSealedVolumeName(tpmHash)
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
 			out, err := cmd.CombinedOutput()
 			Expect(err).ToNot(HaveOccurred(), out)
 
@@ -184,7 +185,8 @@ kcrypt:
 		})
 
 		AfterEach(func() {
-			cmd := exec.Command("kubectl", "delete", "sealedvolume", tpmHash)
+			sealedVolumeName := getSealedVolumeName(tpmHash)
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
 			out, err := cmd.CombinedOutput()
 			Expect(err).ToNot(HaveOccurred(), out)
 		})
@@ -199,7 +201,7 @@ kcrypt:
 
 			// Expect a secret to be created
 			cmd := exec.Command("kubectl", "get", "secrets",
-				fmt.Sprintf("%s-cos-persistent", tpmHash),
+				fmt.Sprintf("%s-cos-persistent", getSealedVolumeName(tpmHash)),
 				"-o=go-template='{{.data.generated_by|base64decode}}'",
 			)
 
@@ -266,7 +268,8 @@ kcrypt:
 		})
 
 		AfterEach(func() {
-			cmd := exec.Command("kubectl", "delete", "sealedvolume", tpmHash)
+			sealedVolumeName := getSealedVolumeName(tpmHash)
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
 			out, err := cmd.CombinedOutput()
 			Expect(err).ToNot(HaveOccurred(), out)
 
@@ -286,26 +289,16 @@ kcrypt:
 		})
 	})
 
-	When("the key management server is listening on https", func() {
+	When("the certificate is pinned on the configuration", Label("remote-https-pinned"), func() {
 		var tpmHash string
 
 		BeforeEach(func() {
 			tpmHash = createTPMPassphraseSecret(vm)
-		})
-
-		AfterEach(func() {
-			cmd := exec.Command("kubectl", "delete", "sealedvolume", tpmHash)
-			out, err := cmd.CombinedOutput()
-			Expect(err).ToNot(HaveOccurred(), out)
-		})
-
-		When("the certificate is pinned on the configuration", Label("remote-https-pinned"), func() {
-			BeforeEach(func() {
-				cert := getChallengerServerCert()
-				kcryptConfig := createConfigWithCert(fmt.Sprintf("https://%s", os.Getenv("KMS_ADDRESS")), cert)
-				kcryptConfigBytes, err := yaml.Marshal(kcryptConfig)
-				Expect(err).ToNot(HaveOccurred())
-				config = fmt.Sprintf(`#cloud-config
+			cert := getChallengerServerCert()
+			kcryptConfig := createConfigWithCert(fmt.Sprintf("https://%s", os.Getenv("KMS_ADDRESS")), cert)
+			kcryptConfigBytes, err := yaml.Marshal(kcryptConfig)
+			Expect(err).ToNot(HaveOccurred())
+			config = fmt.Sprintf(`#cloud-config
 
 hostname: metal-{{ trunc 4 .MachineID }}
 users:
@@ -322,23 +315,33 @@ install:
 %s
 
 `, string(kcryptConfigBytes))
-			})
-
-			It("successfully talks to the server", func() {
-				vm.Reboot()
-				vm.EventuallyConnects(1200)
-				out, err := vm.Sudo("blkid")
-				Expect(err).ToNot(HaveOccurred(), out)
-				Expect(out).To(MatchRegexp("TYPE=\"crypto_LUKS\" PARTLABEL=\"persistent\""), out)
-				Expect(out).To(MatchRegexp("/dev/mapper.*LABEL=\"COS_PERSISTENT\""), out)
-			})
 		})
 
-		When("the no certificate is set in the configuration", Label("remote-https-bad-cert"), func() {
-			BeforeEach(func() {
-				expectedInstallationSuccess = false
+		It("successfully talks to the server", func() {
+			vm.Reboot()
+			vm.EventuallyConnects(1200)
+			out, err := vm.Sudo("blkid")
+			Expect(err).ToNot(HaveOccurred(), out)
+			Expect(out).To(MatchRegexp("TYPE=\"crypto_LUKS\" PARTLABEL=\"persistent\""), out)
+			Expect(out).To(MatchRegexp("/dev/mapper.*LABEL=\"COS_PERSISTENT\""), out)
+		})
 
-				config = fmt.Sprintf(`#cloud-config
+		AfterEach(func() {
+			sealedVolumeName := getSealedVolumeName(tpmHash)
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
+			out, err := cmd.CombinedOutput()
+			Expect(err).ToNot(HaveOccurred(), out)
+		})
+	})
+
+	When("the no certificate is set in the configuration", Label("remote-https-bad-cert"), func() {
+		var tpmHash string
+
+		BeforeEach(func() {
+			tpmHash = createTPMPassphraseSecret(vm)
+			expectedInstallationSuccess = false
+
+			config = fmt.Sprintf(`#cloud-config
 
 hostname: metal-{{ trunc 4 .MachineID }}
 users:
@@ -356,13 +359,19 @@ kcrypt:
   challenger:
     challenger_server: "https://%s"
 `, os.Getenv("KMS_ADDRESS"))
-			})
+		})
 
-			It("fails to talk to the server", func() {
-				out, err := vm.Sudo("cat manual-install.txt")
-				Expect(err).ToNot(HaveOccurred(), out)
-				Expect(out).To(MatchRegexp("failed to verify certificate: x509: certificate signed by unknown authority"))
-			})
+		It("fails to talk to the server", func() {
+			out, err := vm.Sudo("cat manual-install.txt")
+			Expect(err).ToNot(HaveOccurred(), out)
+			Expect(out).To(MatchRegexp("failed to verify certificate: x509: certificate signed by unknown authority"))
+		})
+
+		AfterEach(func() {
+			sealedVolumeName := getSealedVolumeName(tpmHash)
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
+			out, err := cmd.CombinedOutput()
+			Expect(err).ToNot(HaveOccurred(), out)
 		})
 	})
 })

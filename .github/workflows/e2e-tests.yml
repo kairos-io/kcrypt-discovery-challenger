@@ -55,27 +55,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Original basic tests
+          # Basic encryption tests
           - label: "local-encryption"
           - label: "remote-auto"
           - label: "remote-static"
           - label: "remote-https-pinned"
           - label: "remote-https-bad-cert"
           - label: "discoverable-kms"
-          # New selective enrollment tests
-          - label: "remote-tofu"
-          - label: "remote-quarantine"
-          - label: "remote-pcr-mgmt"
-          - label: "remote-ak-mgmt"
-          - label: "remote-secret-reuse"
-          - label: "remote-edge-cases"
-          # Advanced operational tests
-          - label: "remote-multi-partition"
-          - label: "remote-namespace-isolation"
-          - label: "remote-network-resilience"
-          - label: "remote-performance"
-          - label: "remote-large-pcr"
-          - label: "remote-cleanup"
+          # Consolidated remote attestation workflow test
+          - label: "remote-complete-workflow"
     steps:
       - name: Checkout code
         uses: actions/checkout@v5

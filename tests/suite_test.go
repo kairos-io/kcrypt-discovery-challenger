@@ -320,8 +320,16 @@ func expectPassphraseRetrieval(vm VM, partitionLabel string, shouldSucceed bool)
 	}
 }
 
+// Helper to get the correct SealedVolume name from TPM hash
+func getSealedVolumeName(tpmHash string) string {
+	// Convert to lowercase and take first 8 characters to match the actual naming pattern
+	// This matches the pattern used in pkg/challenger/challenger.go: fmt.Sprintf("tofu-%s", tpmHash[:8])
+	return fmt.Sprintf("tofu-%s", strings.ToLower(tpmHash[:8]))
+}
+
 // Helper to create SealedVolume with specific attestation configuration
 func createSealedVolumeWithAttestation(tpmHash string, attestationConfig map[string]interface{}) {
+	sealedVolumeName := getSealedVolumeName(tpmHash)
 	sealedVolumeYaml := fmt.Sprintf(`---
 apiVersion: keyserver.kairos.io/v1alpha1
 kind: SealedVolume
@@ -332,7 +340,7 @@ spec:
   TPMHash: "%s"
   partitions:
     - label: COS_PERSISTENT
-  quarantined: false`, tpmHash, tpmHash)
+  quarantined: false`, sealedVolumeName, tpmHash)
 
 	if attestationConfig != nil {
 		sealedVolumeYaml += "\n  attestation:"
@@ -356,43 +364,48 @@ spec:
 
 // Helper to update SealedVolume attestation configuration
 func updateSealedVolumeAttestation(tpmHashParam string, field, value string) {
-	By(fmt.Sprintf("Updating SealedVolume %s field %s to %s", tpmHashParam, field, value))
+	sealedVolumeName := getSealedVolumeName(tpmHashParam)
+	By(fmt.Sprintf("Updating SealedVolume %s field %s to %s", sealedVolumeName, field, value))
 	patch := fmt.Sprintf(`{"spec":{"attestation":{"%s":"%s"}}}`, field, value)
-	cmd := exec.Command("kubectl", "patch", "sealedvolume", tpmHashParam, "--type=merge", "-p", patch)
+	cmd := exec.Command("kubectl", "patch", "sealedvolume", sealedVolumeName, "--type=merge", "-p", patch)
 	out, err := cmd.CombinedOutput()
 	Expect(err).ToNot(HaveOccurred(), string(out))
 }
 
 // Helper to quarantine TPM
 func quarantineTPM(tpmHash string) {
-	By(fmt.Sprintf("Quarantining TPM %s", tpmHash))
+	sealedVolumeName := getSealedVolumeName(tpmHash)
+	By(fmt.Sprintf("Quarantining TPM %s", sealedVolumeName))
 	patch := `{"spec":{"quarantined":true}}`
-	cmd := exec.Command("kubectl", "patch", "sealedvolume", tpmHash, "--type=merge", "-p", patch)
+	cmd := exec.Command("kubectl", "patch", "sealedvolume", sealedVolumeName, "--type=merge", "-p", patch)
 	out, err := cmd.CombinedOutput()
 	Expect(err).ToNot(HaveOccurred(), string(out))
 }
 
 // Helper to unquarantine TPM
 func unquarantineTPM(tpmHashParam string) {
-	By(fmt.Sprintf("Unquarantining TPM %s", tpmHashParam))
+	sealedVolumeName := getSealedVolumeName(tpmHashParam)
+	By(fmt.Sprintf("Unquarantining TPM %s", sealedVolumeName))
 	patch := `{"spec":{"quarantined":false}}`
-	cmd := exec.Command("kubectl", "patch", "sealedvolume", tpmHashParam, "--type=merge", "-p", patch)
+	cmd := exec.Command("kubectl", "patch", "sealedvolume", sealedVolumeName, "--type=merge", "-p", patch)
 	out, err := cmd.CombinedOutput()
 	Expect(err).ToNot(HaveOccurred(), string(out))
 }
 
 // Helper to delete SealedVolume
-func deleteSealedVolume(tmpHashParam string) {
-	By(fmt.Sprintf("Deleting SealedVolume %s", tmpHashParam))
-	cmd := exec.Command("kubectl", "delete", "sealedvolume", tmpHashParam, "--ignore-not-found=true")
+func deleteSealedVolume(tpmHashParam string) {
+	sealedVolumeName := getSealedVolumeName(tpmHashParam)
+	By(fmt.Sprintf("Deleting SealedVolume %s", sealedVolumeName))
+	cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName, "--ignore-not-found=true")
 	out, err := cmd.CombinedOutput()
 	Expect(err).ToNot(HaveOccurred(), string(out))
 }
 
 // Helper to delete SealedVolume from all namespaces
 func deleteSealedVolumeAllNamespaces(tpmHashParam string) {
-	By(fmt.Sprintf("Deleting SealedVolume %s from all namespaces", tpmHashParam))
-	cmd := exec.Command("kubectl", "delete", "sealedvolume", tpmHashParam, "--ignore-not-found=true", "--all-namespaces")
+	sealedVolumeName := getSealedVolumeName(tpmHashParam)
+	By(fmt.Sprintf("Deleting SealedVolume %s from all namespaces", sealedVolumeName))
+	cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName, "--ignore-not-found=true", "--all-namespaces")
 	out, err := cmd.CombinedOutput()
 	Expect(err).ToNot(HaveOccurred(), string(out))
 }
@@ -450,12 +463,15 @@ spec:
 
 // Helper to create SealedVolume in specific namespace
 func createSealedVolumeInNamespace(tpmHash, namespace string) {
-	// First create the namespace if it doesn't exist
+	// First create the namespace if it doesn't exist with test labels
 	kubectlApplyYaml(fmt.Sprintf(`---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: %s`, namespace))
+  name: %s
+  labels:
+    test.kcrypt.kairos.io/type: test-namespace
+    test.kcrypt.kairos.io/purpose: kcrypt-challenger-testing`, namespace))
 
 	sealedVolumeYaml := fmt.Sprintf(`---
 apiVersion: keyserver.kairos.io/v1alpha1
@@ -478,18 +494,19 @@ func cleanupTestResources(tpmHash string) {
 	if tpmHash != "" {
 		deleteSealedVolumeAllNamespaces(tpmHash)
 
-		// Cleanup associated secrets in all namespaces
-		cmd := exec.Command("kubectl", "delete", "secret", tpmHash, "--ignore-not-found=true", "--all-namespaces")
+		// Cleanup associated secrets using labels
+		// This will delete all secrets created by kcrypt-challenger for this TPM hash
+		cmd := exec.Command("kubectl", "delete", "secret",
+			"-l", fmt.Sprintf("kcrypt.kairos.io/tpm-hash=%s", tpmHash),
+			"--ignore-not-found=true", "--all-namespaces")
 		cmd.CombinedOutput()
+	}
+}
 
-		cmd = exec.Command("kubectl", "delete", "secret", fmt.Sprintf("%s-cos-persistent", tpmHash), "--ignore-not-found=true", "--all-namespaces")
-		cmd.CombinedOutput()
-
-		// Cleanup test namespaces
-		cmd = exec.Command("kubectl", "delete", "namespace", "test-ns-1", "--ignore-not-found=true")
-		cmd.CombinedOutput()
-
-		cmd = exec.Command("kubectl", "delete", "namespace", "test-ns-2", "--ignore-not-found=true")
+// Helper to delete specific test namespaces
+func deleteTestNamespaces(namespaces ...string) {
+	for _, namespace := range namespaces {
+		cmd := exec.Command("kubectl", "delete", "namespace", namespace, "--ignore-not-found=true")
 		cmd.CombinedOutput()
 	}
 }
