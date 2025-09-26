@@ -54,16 +54,16 @@ users:
 passwd: kairos
 
 install:
-encrypted_partitions:
-- COS_PERSISTENT
-- COS_OEM
-grub_options:
-extra_cmdline: "rd.neednet=1"
-reboot: false
+  encrypted_partitions:
+  - COS_PERSISTENT
+  - COS_OEM
+  grub_options:
+    extra_cmdline: "rd.neednet=1"
+  reboot: false
 
 kcrypt:
-challenger:
-challenger_server: "http://%s"
+  challenger:
+    challenger_server: "http://%s"
 `, os.Getenv("KMS_ADDRESS"))
 
 		installKairosWithConfig(config)

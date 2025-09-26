@@ -100,7 +100,7 @@ install:
 
 kcrypt:
   challenger:
-	  mdns: true
+    mdns: true
     challenger_server: "http://%[1]s"
 `, mdnsHostname)
 		})
