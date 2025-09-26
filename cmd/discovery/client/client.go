@@ -20,9 +20,6 @@ import (
 	"github.com/kairos-io/kairos-challenger/pkg/constants"
 )
 
-// Because of how go-pluggable works, we can't just print to stdout
-const LOGFILE = "/tmp/kcrypt-challenger-client.log"
-
 // Retry delays for different failure types
 const (
 	TPMRetryDelay     = 100 * time.Millisecond // Brief delay for TPM hardware busy/unavailable
@@ -45,17 +42,12 @@ func NewClientWithLogger(logger types.KairosLogger) (*Client, error) {
 	return &Client{Config: conf, Logger: logger}, nil
 }
 
-func (c *Client) Start() error {
-	if err := os.RemoveAll(LOGFILE); err != nil { // Start fresh
-		return fmt.Errorf("removing the logfile: %w", err)
-	}
-
+func (c *Client) Start(eventType pluggable.EventType) error {
 	factory := pluggable.NewPluginFactory()
 
 	// Input: bus.EventInstallPayload
 	// Expected output: map[string]string{}
 	factory.Add(bus.EventDiscoveryPassword, func(e *pluggable.Event) pluggable.EventResponse {
-
 		b := &block.Partition{}
 		err := json.Unmarshal([]byte(e.Data), b)
 		if err != nil {
@@ -77,7 +69,7 @@ func (c *Client) Start() error {
 		}
 	})
 
-	return factory.Run(pluggable.EventType(os.Args[1]), os.Stdin, os.Stdout)
+	return factory.Run(eventType, os.Stdin, c.Logger)
 }
 
 // ❯ echo '{ "data": "{ \\"label\\": \\"LABEL\\" }"}' | sudo -E WSS_SERVER="http://localhost:8082/challenge" ./challenger "discovery.password"
