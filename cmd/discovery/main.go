@@ -12,6 +12,7 @@ import (
 	"github.com/kairos-io/kairos-sdk/kcrypt/bus"
 	"github.com/kairos-io/kairos-sdk/types"
 	"github.com/kairos-io/tpm-helpers"
+	"github.com/mudler/go-pluggable"
 	"github.com/spf13/cobra"
 )
 
@@ -187,7 +188,7 @@ with kcrypt and other tools.`, bus.EventDiscoveryPassword),
 	Example: fmt.Sprintf(`  # Plugin mode (for integration with kcrypt)
   echo '{"data": "{\"name\": \"/dev/sda2\", \"uuid\": \"12345-abcde\", \"label\": \"encrypted-data\"}"}' | kcrypt-discovery-challenger %s`, bus.EventDiscoveryPassword),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runPluginMode()
+		return runPluginMode(bus.EventDiscoveryPassword)
 	},
 }
 
@@ -310,7 +311,7 @@ func runGetPassphrase(flags *GetFlags) error {
 }
 
 // runPluginMode handles plugin event commands
-func runPluginMode() error {
+func runPluginMode(eventType pluggable.EventType) error {
 	// In plugin mode, use quiet=true to log to file instead of console
 	// Log level depends on debug flag, write logs to /var/log/kairos/kcrypt-discovery-challenger.log
 	var logLevel string
@@ -320,13 +321,14 @@ func runPluginMode() error {
 		logLevel = "error"
 	}
 
-	logger := types.NewKairosLogger("kcrypt-discovery-challenger", logLevel, true)
+	logger := types.NewKairosLoggerWithExtraDirs("kcrypt-discovery-challenger", logLevel, true, "/var/log/kairos")
+	logger.Debugf("Debug mode enabled for plugin mode")
 	c, err := client.NewClientWithLogger(logger)
 	if err != nil {
 		return fmt.Errorf("creating client: %w", err)
 	}
 
-	err = c.Start()
+	err = c.Start(eventType)
 	if err != nil {
 		return fmt.Errorf("starting plugin: %w", err)
 	}
