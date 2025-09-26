@@ -22,47 +22,24 @@ var _ = Describe("Advanced Scenarios E2E Tests", func() {
 	var testVM VM
 	var tpmHash string
 
-	// VM lifecycle management for reuse optimization
-	var vmInitialized bool
-
 	BeforeEach(func() {
 		expectedInstallationSuccess = true
 		vmOpts = DefaultVMOptions()
-		vmInitialized = false
+		_, testVM = startVM(vmOpts)
+		fmt.Printf("\nadvanced scenarios VM.StateDir = %+v\n", testVM.StateDir)
+		testVM.EventuallyConnects(1200)
 	})
 
 	AfterEach(func() {
-		if vmInitialized {
-			testVM.GatherLog("/run/immucore/immucore.log")
-		}
+		cleanupVM(testVM)
 	})
-
-	// Local helper functions using common suite functions
-	ensureVMRunning := func() {
-		if !vmInitialized {
-			By("Starting VM for advanced scenarios tests")
-			_, testVM = startVM(vmOpts)
-			fmt.Printf("\nadvanced scenarios VM.StateDir = %+v\n", testVM.StateDir)
-			testVM.EventuallyConnects(1200)
-			vmInitialized = true
-		}
-	}
 
 	installKairosWithConfig := func(config string) {
 		installKairosWithConfigAdvanced(testVM, config, expectedInstallationSuccess)
 	}
 
-	// Cleanup VM at the very end
-	var _ = AfterSuite(func() {
-		if vmInitialized {
-			cleanupVM(testVM)
-		}
-	})
-
 	When("Testing Multi-Partition Support", Label("remote-multi-partition"), func() {
 		It("should handle multiple partitions on same TPM with different encryption keys", func() {
-			ensureVMRunning()
-
 			// Step 1: Get TPM hash
 			tpmHash = getTPMHash(testVM)
 			deleteSealedVolume(tpmHash)
@@ -114,8 +91,6 @@ kcrypt:
 
 	When("Testing Namespace Isolation", Label("remote-namespace-isolation"), func() {
 		It("should properly isolate SealedVolumes in different namespaces", func() {
-			ensureVMRunning()
-
 			// Step 1: Get TPM hash
 			tpmHash = getTPMHash(testVM)
 			deleteSealedVolume(tpmHash)
@@ -175,8 +150,6 @@ kcrypt:
 
 	When("Testing Network Resilience", Label("remote-network-resilience"), func() {
 		It("should handle network interruptions gracefully", func() {
-			ensureVMRunning()
-
 			// Step 1: Initial setup
 			tpmHash = getTPMHash(testVM)
 			deleteSealedVolume(tpmHash)
@@ -236,8 +209,6 @@ kcrypt:
 
 	When("Testing Performance Under Load", Label("remote-performance"), func() {
 		It("should handle multiple concurrent authentication requests", func() {
-			ensureVMRunning()
-
 			// Step 1: Setup multiple encrypted partitions to test concurrent access
 			tpmHash = getTPMHash(testVM)
 			deleteSealedVolume(tpmHash)
@@ -290,8 +261,6 @@ kcrypt:
 
 	When("Testing Large PCR Configuration", Label("remote-large-pcr"), func() {
 		It("should handle attestation with many PCRs", func() {
-			ensureVMRunning()
-
 			// Step 1: Create SealedVolume with extensive PCR configuration
 			tpmHash = getTPMHash(testVM)
 			deleteSealedVolume(tpmHash)
@@ -381,8 +350,6 @@ kcrypt:
 
 	When("Testing Resource Cleanup", Label("remote-cleanup"), func() {
 		It("should properly cleanup resources when SealedVolumes are deleted", func() {
-			ensureVMRunning()
-
 			// Step 1: Create and verify initial setup
 			tpmHash = getTPMHash(testVM)
 			deleteSealedVolume(tpmHash)
