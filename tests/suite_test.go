@@ -22,8 +22,11 @@ import (
 	"github.com/spectrocloud/peg/pkg/machine/types"
 )
 
+// Global VM variable for fail handler access
+var globalVM *VM
+
 func TestE2e(t *testing.T) {
-	RegisterFailHandler(Fail)
+	RegisterFailHandler(printChallengerLogsOnFailure)
 	RunSpecs(t, "kcrypt-challenger e2e test Suite")
 }
 
@@ -188,6 +191,7 @@ func startVM(vmOpts VMOptions) (context.Context, VM) {
 	Expect(err).ToNot(HaveOccurred())
 
 	vm := NewVM(m, stateDir)
+	globalVM = &vm // Set global VM for fail handler access
 
 	ctx, err := vm.Start(context.Background())
 	Expect(err).ToNot(HaveOccurred())
@@ -547,4 +551,47 @@ func cleanupVM(vm VM) {
 		}
 	})
 	Expect(err).ToNot(HaveOccurred())
+}
+
+// Fail handler that captures challenger logs when any test fails
+func printChallengerLogsOnFailure(message string, callerSkip ...int) {
+	if globalVM != nil {
+		fmt.Printf("\n=== TEST FAILED - CAPTURING CHALLENGER LOGS ===\n")
+
+		// Try to read the challenger log file
+		logOutput, err := globalVM.Sudo("cat /var/log/kairos/kcrypt-discovery-challenger.log 2>/dev/null || echo 'Log file not found'")
+		if err != nil {
+			logOutput = fmt.Sprintf("Error reading challenger log: %v", err)
+		}
+
+		// Get additional system information that might be helpful
+		processInfo, err := globalVM.Sudo("ps aux | grep kcrypt-discovery-challenger || echo 'No challenger processes found'")
+		if err != nil {
+			processInfo = fmt.Sprintf("Error getting process info: %v", err)
+		}
+
+		// Check if the challenger binary exists and is executable
+		binaryInfo, err := globalVM.Sudo("ls -la /system/discovery/kcrypt-discovery-challenger 2>/dev/null || echo 'Challenger binary not found'")
+		if err != nil {
+			binaryInfo = fmt.Sprintf("Error checking binary: %v", err)
+		}
+
+		// Check TPM status
+		tpmInfo, err := globalVM.Sudo("ls -la /dev/tpm* 2>/dev/null || echo 'No TPM devices found'")
+		if err != nil {
+			tpmInfo = fmt.Sprintf("Error checking TPM: %v", err)
+		}
+
+		// Print the logs to help with debugging
+		fmt.Printf("Challenger log file content:\n%s\n", logOutput)
+		fmt.Printf("\nProcess information:\n%s\n", processInfo)
+		fmt.Printf("\nBinary information:\n%s\n", binaryInfo)
+		fmt.Printf("\nTPM device information:\n%s\n", tpmInfo)
+		fmt.Printf("=== END CHALLENGER LOGS ===\n\n")
+	} else {
+		fmt.Printf("\n=== TEST FAILED - NO VM AVAILABLE FOR LOG CAPTURE ===\n")
+	}
+
+	// Ensures the correct line numbers are reported
+	Fail(message, callerSkip[0]+1)
 }
