@@ -125,11 +125,18 @@ func generateTOFUPassphrase() (string, error) {
 // createOrReuseTOFUSecret creates a Kubernetes secret containing the generated passphrase
 // If a secret with the same name already exists, it returns the existing passphrase
 // Returns the passphrase that should be used (either new or existing)
-func createOrReuseTOFUSecret(kclient *kubernetes.Clientset, namespace, secretName, secretPath, passphrase string, logger logr.Logger) (string, error) {
+func createOrReuseTOFUSecret(kclient *kubernetes.Clientset, namespace, secretName, secretPath, passphrase, tpmHash, partitionLabel string, logger logr.Logger) (string, error) {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
 			Namespace: namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "kcrypt-challenger",
+				"app.kubernetes.io/component": "encryption-secret",
+				"kcrypt.kairos.io/tpm-hash":   tpmHash,
+				"kcrypt.kairos.io/partition":  partitionLabel,
+				"kcrypt.kairos.io/managed-by": "kcrypt-challenger", // Additional safety label
+			},
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
@@ -669,7 +676,7 @@ func performInitialEnrollment(ctx *EnrollmentContext, attestation *ClientAttesta
 
 	// Create Kubernetes secret (or reuse if it already exists from a previous enrollment)
 	logger.Info("Creating TOFU secret", "secretName", secretName, "secretPath", secretPath)
-	actualPassphrase, err := createOrReuseTOFUSecret(kclient, namespace, secretName, secretPath, passphrase, logger)
+	actualPassphrase, err := createOrReuseTOFUSecret(kclient, namespace, secretName, secretPath, passphrase, ctx.TPMHash, ctx.Partition.Label, logger)
 	if err != nil {
 		return fmt.Errorf("creating TOFU secret: %w", err)
 	}

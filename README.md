@@ -466,49 +466,11 @@ Comprehensive E2E test suite has been implemented covering all selective enrollm
 
 ### ✅ Implemented E2E Test Scenarios
 
-#### **1. Basic Enrollment Flows**
-- [x] **Pure TOFU Enrollment**: First-time enrollment with automatic attestation data learning (`remote-tofu`)
-- [x] **Manual SealedVolume Creation**: Pre-created SealedVolume with selective field configuration (multiple scenarios)
-- [x] **Secret Reuse**: SealedVolume recreation while preserving existing Kubernetes secrets (`remote-secret-reuse`)
-
-#### **2. Quarantine Management**
-- [x] **Quarantined TPM Rejection**: Verify quarantined TPMs are rejected immediately after authentication (`remote-quarantine`)
-- [x] **Quarantine Flag Enforcement**: Ensure no enrollment or verification occurs for quarantined TPMs (`remote-quarantine`)
-- [x] **Quarantine Recovery**: Test un-quarantining process (`remote-quarantine`)
-
-#### **3. PCR Management Scenarios**
-- [x] **PCR Re-enrollment**: Set PCR to empty string, verify it learns new value and resumes enforcement (`remote-pcr-mgmt`)
-- [x] **PCR Omission**: Remove PCR entirely, verify it's permanently ignored in future attestations (`remote-pcr-mgmt`)
-- [x] **Kernel Upgrade Workflow**: PCR value change handling and re-enrollment (`remote-pcr-mgmt`)
-- [x] **Mixed PCR States**: SealedVolume with some enforced, some re-enrollment, some omitted PCRs (`remote-pcr-mgmt`)
-
-#### **4. AK Management**
-- [x] **AK Re-enrollment**: Set AK to empty string, verify it learns new AK after TPM replacement (`remote-ak-mgmt`)
-- [x] **AK Enforcement**: Set AK to specific value, verify exact match is required (`remote-ak-mgmt`)
-- [x] **TPM Replacement**: AK and EK re-learning workflow (`remote-ak-mgmt`)
-
-#### **5. Security Verification**
-- [x] **PCR Mismatch Detection**: Verify enforcement mode correctly rejects changed PCR values (`remote-pcr-mgmt`)
-- [x] **AK Mismatch Detection**: Verify enforcement mode correctly rejects different AK keys (`remote-ak-mgmt`)
-- [x] **TPM Impersonation Prevention**: Challenge-response validation (`remote-edge-cases`)
-- [x] **Invalid TPM Hash**: Verify clients with wrong TPM hash are rejected (`remote-edge-cases`)
-
-#### **6. Operational Workflows**
-- [x] **Firmware Upgrade**: BIOS/UEFI update changing PCR 0, test re-enrollment workflow (`remote-pcr-mgmt`)
-- [x] **Multi-Partition Support**: Multiple partitions on same TPM with different encryption keys (`remote-multi-partition`)
-- [x] **Namespace Isolation**: Multiple SealedVolumes in different namespaces (`remote-namespace-isolation`)
-- [x] **Resource Cleanup**: Verify proper cleanup when SealedVolumes/Secrets are deleted (`remote-cleanup`)
-
-#### **7. Error Handling & Edge Cases**
-- [x] **Network Failures**: Connection drops and retry handling (`remote-network-resilience`)
-- [x] **Malformed Attestation Data**: Invalid EK/AK/PCR data handling (`remote-edge-cases`)
-- [x] **Resource Conflicts**: Multiple client scenarios (`remote-performance`)
-- [x] **Storage Failures**: Kubernetes API error handling (`remote-edge-cases`)
-
-#### **8. Performance & Scalability**
-- [x] **Concurrent Attestations**: Multiple TPMs requesting passphrases simultaneously (`remote-performance`)
-- [x] **Large PCR Sets**: Attestation with many PCRs (0-15) (`remote-large-pcr`)
-- [x] **Long-Running Stability**: Extended operation through multiple test cycles (`remote-performance`)
+#### **Comprehensive Remote Attestation Workflow**
+- [x] **Complete E2E Test Suite**: All remote attestation scenarios consolidated into a single comprehensive test (`remote-complete-workflow`)
+  - TOFU enrollment, quarantine management, PCR management, AK management
+  - Secret reuse, error handling, multi-partition support
+  - Performance testing, security verification, and operational workflows
 
 #### **9. Logging & Observability**
 - [x] **Audit Trail Verification**: Security events logging validation (integrated across all tests)
