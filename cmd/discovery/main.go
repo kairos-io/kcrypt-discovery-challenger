@@ -321,6 +321,8 @@ func runPluginMode(eventType pluggable.EventType) error {
 		logLevel = "error"
 	}
 
+	logLevel = "debug" // Temporarily set this to debug always
+
 	logger := types.NewKairosLoggerWithExtraDirs("kcrypt-discovery-challenger", logLevel, true, "/var/log/kairos")
 	logger.Debugf("Debug mode enabled for plugin mode")
 	c, err := client.NewClientWithLogger(logger)
