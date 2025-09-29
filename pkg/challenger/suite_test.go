@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func TestEpinio(t *testing.T) {
+func TestChallenger(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Kcrypt challenger suite")
 }

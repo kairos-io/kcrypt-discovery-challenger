@@ -592,6 +592,53 @@ func printChallengerLogsOnFailure(message string, callerSkip ...int) {
 		fmt.Printf("\n=== TEST FAILED - NO VM AVAILABLE FOR LOG CAPTURE ===\n")
 	}
 
+	// Capture kcrypt-challenger-server logs from Kubernetes
+	fmt.Printf("\n=== CAPTURING KCRYPT-CHALLENGER-SERVER LOGS ===\n")
+
+	// First, let's see what namespaces and pods exist
+	allPods, err := exec.Command("kubectl", "get", "pods", "-A").Output()
+	if err != nil {
+		allPods = []byte(fmt.Sprintf("Error getting all pods: %v", err))
+	}
+	fmt.Printf("All pods in cluster:\n%s\n", string(allPods))
+
+	// Try to get server logs from both possible namespaces
+	// Check system namespace first (based on challenger-patch.yaml)
+	serverLogs, err := exec.Command("kubectl", "logs", "-n", "system", "-l", "control-plane=controller-manager", "--tail=500").Output()
+	if err != nil {
+		serverLogs = []byte(fmt.Sprintf("Error getting server logs from system namespace: %v", err))
+	}
+	fmt.Printf("Server logs from system namespace (last 500 lines):\n%s\n", string(serverLogs))
+
+	// Also check default namespace (based on kustomization override)
+	serverLogsDefault, err := exec.Command("kubectl", "logs", "-n", "default", "-l", "control-plane=controller-manager", "--tail=500").Output()
+	if err != nil {
+		serverLogsDefault = []byte(fmt.Sprintf("Error getting server logs from default namespace: %v", err))
+	}
+	fmt.Printf("Server logs from default namespace (last 500 lines):\n%s\n", string(serverLogsDefault))
+
+	// Get logs from the last 10 minutes from both namespaces
+	serverLogsAll, err := exec.Command("kubectl", "logs", "-n", "system", "-l", "control-plane=controller-manager", "--since=10m").Output()
+	if err != nil {
+		serverLogsAll = []byte(fmt.Sprintf("Error getting recent server logs from system namespace: %v", err))
+	}
+	fmt.Printf("\nServer logs from system namespace (last 10 minutes):\n%s\n", string(serverLogsAll))
+
+	serverLogsAllDefault, err := exec.Command("kubectl", "logs", "-n", "default", "-l", "control-plane=controller-manager", "--since=10m").Output()
+	if err != nil {
+		serverLogsAllDefault = []byte(fmt.Sprintf("Error getting recent server logs from default namespace: %v", err))
+	}
+	fmt.Printf("\nServer logs from default namespace (last 10 minutes):\n%s\n", string(serverLogsAllDefault))
+
+	// Check if there are any sealedvolume resources that might be relevant
+	sealedVolumeInfo, err := exec.Command("kubectl", "get", "sealedvolume", "-A", "-o", "wide").Output()
+	if err != nil {
+		sealedVolumeInfo = []byte(fmt.Sprintf("Error getting sealedvolume info: %v", err))
+	}
+	fmt.Printf("\nSealedVolume resources:\n%s\n", string(sealedVolumeInfo))
+
+	fmt.Printf("=== END KCRYPT-CHALLENGER-SERVER LOGS ===\n\n")
+
 	// Ensures the correct line numbers are reported
 	Fail(message, callerSkip[0]+1)
 }
