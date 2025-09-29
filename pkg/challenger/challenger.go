@@ -406,6 +406,7 @@ type ClientAttestation struct {
 // EnrollmentContext represents the current enrollment state
 type EnrollmentContext struct {
 	IsNewEnrollment bool
+	IsNewPartition  bool
 	SealedVolume    *keyserverv1alpha1.SealedVolume
 	VolumeData      *SealedVolumeData
 	TPMHash         string
@@ -722,11 +723,17 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 		return
 	}
 
-	// 6. Handle enrollment: initial enrollment for new TPMs or re-enrollment updates for existing ones
+	// 6. Handle enrollment: initial enrollment for new TPMs, new partitions, or re-enrollment updates for existing ones
 	if enrollmentContext.IsNewEnrollment {
 		// Perform initial TOFU enrollment for new TPMs
 		if err := performInitialEnrollment(enrollmentContext, clientAttestation, reconciler, kclient, namespace, logger); err != nil {
 			errorMessage(conn, logger, err, "Initial enrollment")
+			return
+		}
+	} else if enrollmentContext.IsNewPartition {
+		// This is a new partition for an existing TPM - add partition to existing SealedVolume
+		if err := addPartitionToExistingVolume(enrollmentContext, clientAttestation, reconciler, kclient, namespace, logger); err != nil {
+			errorMessage(conn, logger, err, "Adding new partition")
 			return
 		}
 	} else {
@@ -801,6 +808,68 @@ func performInitialEnrollment(ctx *EnrollmentContext, attestation *ClientAttesta
 		}
 		return "reused_existing"
 	}())
+	return nil
+}
+
+// addPartitionToExistingVolume adds a new partition to an existing SealedVolume
+func addPartitionToExistingVolume(ctx *EnrollmentContext, attestation *ClientAttestation, reconciler *controllers.SealedVolumeReconciler, kclient *kubernetes.Clientset, namespace string, logger logr.Logger) error {
+	logger.Info("Adding new partition to existing SealedVolume")
+
+	// Generate secret name and path for the new partition using DefaultSecret logic
+	secretName, secretPath := ctx.VolumeData.DefaultSecret()
+
+	// Generate secure passphrase for the new partition
+	passphrase, err := generateTOFUPassphrase()
+	if err != nil {
+		return fmt.Errorf("generating TOFU passphrase: %w", err)
+	}
+
+	// Create Kubernetes secret for the new partition
+	logger.Info("Creating TOFU secret for new partition", "secretName", secretName, "secretPath", secretPath)
+	actualPassphrase, err := createOrReuseTOFUSecret(kclient, namespace, secretName, secretPath, passphrase, ctx.TPMHash, ctx.Partition.Label, logger)
+	if err != nil {
+		return fmt.Errorf("creating TOFU secret: %w", err)
+	}
+
+	// Add the new partition to the existing SealedVolume
+	newPartition := keyserverv1alpha1.PartitionSpec{
+		Label:      ctx.Partition.Label,
+		DeviceName: ctx.Partition.DeviceName,
+		UUID:       ctx.Partition.UUID,
+		Secret: &keyserverv1alpha1.SecretSpec{
+			Name: secretName,
+			Path: secretPath,
+		},
+	}
+
+	// Add the new partition to the existing SealedVolume
+	ctx.SealedVolume.Spec.Partitions = append(ctx.SealedVolume.Spec.Partitions, newPartition)
+
+	// Update the SealedVolume resource
+	if err := reconciler.Update(context.TODO(), ctx.SealedVolume); err != nil {
+		return fmt.Errorf("updating SealedVolume with new partition: %w", err)
+	}
+
+	// Update the enrollment context with volume data for passphrase retrieval
+	ctx.VolumeData = &SealedVolumeData{
+		Quarantined:    ctx.SealedVolume.Spec.Quarantined,
+		SecretName:     secretName,
+		SecretPath:     secretPath,
+		VolumeName:     ctx.SealedVolume.Name,
+		PartitionLabel: ctx.Partition.Label,
+	}
+
+	logger.Info("Successfully added new partition to existing SealedVolume",
+		"secretName", secretName,
+		"secretPath", secretPath,
+		"partitionLabel", ctx.Partition.Label,
+		"passphraseSource", func() string {
+			if actualPassphrase == passphrase {
+				return "newly_generated"
+			}
+			return "reused_existing"
+		}())
+
 	return nil
 }
 
@@ -1336,26 +1405,88 @@ func performTPMAuthentication(conn *websocket.Conn, logger logr.Logger) (*Client
 	return clientAttestation, tpmHash, nil
 }
 
+// findVolumeForTPM finds a SealedVolume by TPM hash, regardless of partition
+func findVolumeForTPM(tpmHash string, volumeList *keyserverv1alpha1.SealedVolumeList) *keyserverv1alpha1.SealedVolume {
+	for _, v := range volumeList.Items {
+		if tpmHash == v.Spec.TPMHash {
+			return &v
+		}
+	}
+	return nil
+}
+
+// findPartitionInVolume checks if a specific partition exists in a SealedVolume
+func findPartitionInVolume(volume *keyserverv1alpha1.SealedVolume, partition PartitionInfo) (*SealedVolumeData, bool) {
+	for _, p := range volume.Spec.Partitions {
+		deviceNameMatches := partition.DeviceName != "" && p.DeviceName == partition.DeviceName
+		uuidMatches := partition.UUID != "" && p.UUID == partition.UUID
+		labelMatches := partition.Label != "" && p.Label == partition.Label
+
+		if labelMatches || uuidMatches || deviceNameMatches {
+			secretName := ""
+			if p.Secret != nil && p.Secret.Name != "" {
+				secretName = p.Secret.Name
+			}
+			secretPath := ""
+			if p.Secret != nil && p.Secret.Path != "" {
+				secretPath = p.Secret.Path
+			}
+			volumeData := &SealedVolumeData{
+				Quarantined:    volume.Spec.Quarantined,
+				SecretName:     secretName,
+				SecretPath:     secretPath,
+				VolumeName:     volume.Name,
+				PartitionLabel: p.Label,
+			}
+			return volumeData, true
+		}
+	}
+	return nil, false
+}
+
 // determineEnrollmentContext checks for existing enrollment and creates context
 func determineEnrollmentContext(reconciler *controllers.SealedVolumeReconciler, namespace, tpmHash string, partition PartitionInfo, logger logr.Logger) (*EnrollmentContext, error) {
-	requestData := PassphraseRequestData{
-		TPMHash:    tpmHash,
-		Label:      partition.Label,
-		DeviceName: partition.DeviceName,
-		UUID:       partition.UUID,
-	}
-
 	volumeList := &keyserverv1alpha1.SealedVolumeList{}
 	err := reconciler.List(context.TODO(), volumeList, client.InNamespace(namespace))
 	if err != nil {
 		return nil, fmt.Errorf("listing sealed volumes: %w", err)
 	}
 
-	existingVolume, existingSealedVolume := findVolumeFor(requestData, volumeList)
-	isNewEnrollment := existingVolume == nil
+	// First, check if there's any SealedVolume for this TPM hash
+	existingSealedVolume := findVolumeForTPM(tpmHash, volumeList)
+
+	var existingVolume *SealedVolumeData
+	var isNewEnrollment bool
+	var isNewPartition bool
+
+	if existingSealedVolume != nil {
+		// TPM is already enrolled - check if this specific partition exists
+		volumeData, partitionExists := findPartitionInVolume(existingSealedVolume, partition)
+		if partitionExists {
+			// This is an existing partition for an enrolled TPM
+			existingVolume = volumeData
+			isNewEnrollment = false
+			isNewPartition = false
+		} else {
+			// This is a new partition for an enrolled TPM
+			// Create basic volume data from the existing SealedVolume
+			existingVolume = &SealedVolumeData{
+				Quarantined:    existingSealedVolume.Spec.Quarantined,
+				VolumeName:     existingSealedVolume.Name,
+				PartitionLabel: partition.Label, // Use the new partition label
+			}
+			isNewEnrollment = false
+			isNewPartition = true
+		}
+	} else {
+		// No SealedVolume exists for this TPM - this is a completely new enrollment
+		isNewEnrollment = true
+		isNewPartition = false
+	}
 
 	logger.Info("Determined enrollment context",
 		"isNewEnrollment", isNewEnrollment,
+		"isNewPartition", isNewPartition,
 		"tpmHash", tpmHash,
 		"partitionLabel", partition.Label,
 		"partitionDeviceName", partition.DeviceName,
@@ -1364,6 +1495,7 @@ func determineEnrollmentContext(reconciler *controllers.SealedVolumeReconciler, 
 
 	return &EnrollmentContext{
 		IsNewEnrollment: isNewEnrollment,
+		IsNewPartition:  isNewPartition,
 		SealedVolume:    existingSealedVolume,
 		VolumeData:      existingVolume,
 		TPMHash:         tpmHash,
