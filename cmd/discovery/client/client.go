@@ -69,7 +69,7 @@ func (c *Client) Start(eventType pluggable.EventType) error {
 		}
 	})
 
-	return factory.Run(eventType, os.Stdin, c.Logger)
+	return factory.Run(eventType, os.Stdin, os.Stdout)
 }
 
 // ❯ echo '{ "data": "{ \\"label\\": \\"LABEL\\" }"}' | sudo -E WSS_SERVER="http://localhost:8082/challenge" ./challenger "discovery.password"
