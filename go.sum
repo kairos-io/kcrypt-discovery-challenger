@@ -457,6 +457,8 @@ github.com/kairos-io/kairos-sdk v0.11.0 h1:FFpkjjK5Sf/SeWuxZORXuEEuoLldQ6fhMsUOc
 github.com/kairos-io/kairos-sdk v0.11.0/go.mod h1:SFHfHIYug+lRgNkXhcxVGfUOQ06QJCYKcULlbsN+/Ys=
 github.com/kairos-io/tpm-helpers v0.0.0-20240123063624-f7a3fcc66199 h1:eXiZNiQfZDelYfTF733IxDOKGAKJqn0fF0kFY10QreU=
 github.com/kairos-io/tpm-helpers v0.0.0-20240123063624-f7a3fcc66199/go.mod h1:6YGebKVrPoJGBd9QE+x4zyuo3vPw1y33iQkNChjlBo8=
+github.com/kairos-io/tpm-helpers v0.0.0-20250917111550-e914e08a09c2 h1:mhpOv6cv4vGxcjot3jq/rEQOQbcS5w/n7XlNhdEx/1Y=
+github.com/kairos-io/tpm-helpers v0.0.0-20250917111550-e914e08a09c2/go.mod h1:TvR2vGOuB5qXCyXUqXA4EJLFW5XOW5HvPOvD2SLJ5Wg=
 github.com/kisielk/errcheck v1.1.0/go.mod h1:EZBBE59ingxPouuu3KfxchcWSUPOHkagtvWXihfKN4Q=
 github.com/kisielk/errcheck v1.2.0/go.mod h1:/BMXB+zMLi60iA8Vv6Ksmxu/1UDYcXs4uQLJ+jE2L00=
 github.com/kisielk/errcheck v1.5.0/go.mod h1:pFxgyoBC7bSaBwPgfKdkLd5X25qrDl4LWUI2bnpBCr8=
