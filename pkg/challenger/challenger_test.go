@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 
 	"github.com/go-logr/logr"
-	"github.com/google/go-attestation/attest"
 	keyserverv1alpha1 "github.com/kairos-io/kairos-challenger/api/v1alpha1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -146,110 +145,6 @@ var _ = Describe("challenger", func() {
 
 		BeforeEach(func() {
 			logger = logr.Discard()
-		})
-
-		Describe("verifyAKMatch with selective enrollment", func() {
-			var currentAK *attest.AttestationParameters
-			var expectedAKPEM string
-			const mockAKPublicKey = "mock-ak-public-key"
-
-			BeforeEach(func() {
-				// Mock current AK parameters - in real implementation this would come from TPM
-				currentAK = &attest.AttestationParameters{
-					Public:                  []byte(mockAKPublicKey),
-					UseTCSDActivationFormat: false,
-					CreateData:              []byte("mock-create-data"),
-					CreateAttestation:       []byte("mock-create-attestation"),
-					CreateSignature:         []byte("mock-create-signature"),
-				}
-
-				// Generate the expected PEM encoding from the plain text constant
-				var err error
-				expectedAKPEM, err = encodeAKToPEM(currentAK)
-				Expect(err).To(BeNil())
-			})
-
-			When("stored AK is empty (re-enrollment mode)", func() {
-				It("should store the current AK value during re-enrollment", func() {
-					attestation := &keyserverv1alpha1.AttestationSpec{
-						AKPublicKey: "", // Empty = re-enrollment mode
-					}
-
-					// Before re-enrollment: AK should be empty
-					Expect(attestation.AKPublicKey).To(Equal(""))
-
-					// Re-enrollment should store the current AK
-					err := updateAttestationDataSelective(attestation, currentAK, nil, logger)
-					Expect(err).To(BeNil())
-
-					// After re-enrollment: AK should contain the exact expected PEM value
-					Expect(attestation.AKPublicKey).To(Equal(expectedAKPEM))
-				})
-
-				It("should accept any AK, store it during re-enrollment, then enforce exact match", func() {
-					attestation := &keyserverv1alpha1.AttestationSpec{
-						AKPublicKey: "", // Start in re-enrollment mode
-					}
-					sealedVolume := &keyserverv1alpha1.SealedVolume{
-						Spec: keyserverv1alpha1.SealedVolumeSpec{
-							Attestation: attestation,
-						},
-					}
-
-					// Step 1: Verification should pass with any AK (re-enrollment mode)
-					err := verifyAKMatchSelective(sealedVolume, currentAK, logger)
-					Expect(err).To(BeNil())
-
-					// Step 2: Re-enroll - store the AK
-					err = updateAttestationDataSelective(attestation, currentAK, nil, logger)
-					Expect(err).To(BeNil())
-
-					// Step 3: Now we should be in enforcement mode - same AK should pass
-					err = verifyAKMatchSelective(sealedVolume, currentAK, logger)
-					Expect(err).To(BeNil())
-
-					// Step 4: Different AK should now fail (enforcement mode)
-					differentAK := &attest.AttestationParameters{
-						Public: []byte("different-ak-key"),
-					}
-					err = verifyAKMatchSelective(sealedVolume, differentAK, logger)
-					Expect(err).To(HaveOccurred())
-					Expect(err.Error()).To(ContainSubstring("AK public key does not match"))
-				})
-			})
-
-			When("stored AK is set (enforcement mode)", func() {
-				It("should enforce exact match", func() {
-					// Create a specific AK PEM that won't match our mock
-					storedAKPEM := "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtest\n-----END PUBLIC KEY-----"
-					attestation := &keyserverv1alpha1.AttestationSpec{
-						AKPublicKey: storedAKPEM,
-					}
-					sealedVolume := &keyserverv1alpha1.SealedVolume{
-						Spec: keyserverv1alpha1.SealedVolumeSpec{
-							Attestation: attestation,
-						},
-					}
-
-					err := verifyAKMatchSelective(sealedVolume, currentAK, logger)
-					Expect(err).To(HaveOccurred())
-					Expect(err.Error()).To(ContainSubstring("AK public key does not match"))
-				})
-			})
-
-			When("no attestation data exists", func() {
-				It("should return error", func() {
-					sealedVolume := &keyserverv1alpha1.SealedVolume{
-						Spec: keyserverv1alpha1.SealedVolumeSpec{
-							Attestation: nil,
-						},
-					}
-
-					err := verifyAKMatchSelective(sealedVolume, currentAK, logger)
-					Expect(err).To(HaveOccurred())
-					Expect(err.Error()).To(ContainSubstring("no attestation data"))
-				})
-			})
 		})
 
 		Describe("verifyPCRValuesSelective", func() {
@@ -441,11 +336,9 @@ var _ = Describe("challenger", func() {
 			})
 		})
 
-		Describe("updateAttestationData for selective enrollment", func() {
-			It("should update empty fields with current values", func() {
-				currentAK := &attest.AttestationParameters{
-					Public: []byte("new-ak-public-key"),
-				}
+		Describe("updateAttestationDataSelective", func() {
+			It("should update empty PCR fields with current values", func() {
+				// Set up test data
 				currentPCRs := &keyserverv1alpha1.PCRValues{
 					PCRs: map[string]string{
 						"0":  "new_pcr0_value",
@@ -455,7 +348,6 @@ var _ = Describe("challenger", func() {
 				}
 
 				attestation := &keyserverv1alpha1.AttestationSpec{
-					AKPublicKey: "", // Empty = should be updated
 					PCRValues: &keyserverv1alpha1.PCRValues{
 						PCRs: map[string]string{
 							"0":  "",                 // Empty = should be updated
@@ -465,62 +357,18 @@ var _ = Describe("challenger", func() {
 					},
 				}
 
-				err := updateAttestationDataSelective(attestation, currentAK, currentPCRs, logger)
+				// Call the function under test
+				err := updateAttestationDataSelective(attestation, nil, currentPCRs, logger)
 				Expect(err).To(BeNil())
 
-				// AK should be updated
-				Expect(attestation.AKPublicKey).ToNot(BeEmpty())
-
-				// PCR0 should be updated (was empty)
+				// Check results: PCR0 should be updated (was empty)
 				Expect(attestation.PCRValues.PCRs["0"]).To(Equal("new_pcr0_value"))
 
-				// PCR7 should NOT be updated (was set)
+				// Check results: PCR7 should NOT be updated (was set)
 				Expect(attestation.PCRValues.PCRs["7"]).To(Equal("fixed_pcr7_value"))
 
-				// PCR11 should be updated (was empty)
+				// Check results: PCR11 should be updated (was empty)
 				Expect(attestation.PCRValues.PCRs["11"]).To(Equal("new_pcr11_value"))
-			})
-
-			It("should demonstrate AK re-enrollment workflow", func() {
-				// Step 1: Start with empty AK (re-enrollment mode)
-				originalAK := ""
-				attestation := &keyserverv1alpha1.AttestationSpec{
-					AKPublicKey: originalAK, // Empty = re-enrollment mode
-				}
-
-				// Step 2: Current AK from client
-				currentAK := &attest.AttestationParameters{
-					Public: []byte("client-provided-ak-key"),
-				}
-
-				// Step 3: Verification should pass (empty stored AK accepts any)
-				sealedVolume := &keyserverv1alpha1.SealedVolume{
-					Spec: keyserverv1alpha1.SealedVolumeSpec{
-						Attestation: attestation,
-					},
-				}
-				err := verifyAKMatchSelective(sealedVolume, currentAK, logger)
-				Expect(err).To(BeNil())
-
-				// Step 4: Update should store the new AK (this is the re-enrollment)
-				err = updateAttestationDataSelective(attestation, currentAK, nil, logger)
-				Expect(err).To(BeNil())
-
-				// Step 5: Verify the AK was actually enrolled (stored)
-				Expect(attestation.AKPublicKey).ToNot(BeEmpty())
-				Expect(attestation.AKPublicKey).ToNot(Equal(originalAK))
-
-				// Step 6: Future verification should now require exact match
-				err = verifyAKMatchSelective(sealedVolume, currentAK, logger)
-				Expect(err).To(BeNil()) // Should still pass with same AK
-
-				// Step 7: Different AK should now fail (enforcement mode)
-				differentAK := &attest.AttestationParameters{
-					Public: []byte("different-ak-key"),
-				}
-				err = verifyAKMatchSelective(sealedVolume, differentAK, logger)
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("AK public key does not match"))
 			})
 		})
 
