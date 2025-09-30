@@ -131,7 +131,7 @@ sequenceDiagram
 
     Note over TPM,Client: Client Boot Process
     Client->>TPM: Extract EK (Endorsement Key)
-    Client->>TPM: Generate AK (Attestation Key)
+    Client->>TPM: Generate Transient AK (Ephemeral Attestation Key)
     Client->>TPM: Read PCR Values (Boot State)
 
     Note over Client,Challenger: 1. Connection Establishment
@@ -139,12 +139,12 @@ sequenceDiagram
     Challenger->>Client: Connection established
 
     Note over Client,Challenger: 2. TPM Authentication (Challenge-Response)
-    Client->>Challenger: Send EK + AK attestation data
+    Client->>Challenger: Send EK + Transient AK attestation data
     Challenger->>Challenger: Decode EK/AK, compute TPM hash
     Challenger->>Challenger: Generate cryptographic challenge
     Challenger->>Client: Send challenge (encrypted with EK)
     Client->>TPM: Decrypt challenge using private EK
-    Client->>TPM: Sign response using private AK
+    Client->>TPM: Sign response using transient AK
     Client->>Challenger: Send proof response + PCR quote
     Challenger->>Challenger: Verify challenge response
 
@@ -189,6 +189,16 @@ sequenceDiagram
 
     Note over TPM,Client: Success - Node continues boot process
 ```
+
+### Transient Attestation Key (AK) Approach
+
+The kcrypt-challenger now uses a **transient AK approach** that eliminates the need for persistent AK storage:
+
+- **No Persistent Storage**: AKs are created fresh for each attestation request
+- **EK-Only Enrollment**: Only the Endorsement Key (EK) is enrolled and stored on the server
+- **Ephemeral AKs**: Each boot generates a new transient AK for attestation
+- **Reduced TPM Usage**: No persistent TPM resources are consumed for AK storage
+- **Simplified Management**: No need to manage AK lifecycle or cleanup
 
 ### Flow Explanation
 
@@ -445,8 +455,8 @@ kubectl patch sealedvolume my-volume --type='merge' -p='{"spec":{"attestation":{
 # Re-learn a PCR after hardware change (e.g., PCR 0 after BIOS update)
 kubectl patch sealedvolume my-volume --type='merge' -p='{"spec":{"attestation":{"pcrValues":{"pcrs":{"0":""}}}}}'
 
-# Re-learn AK after TPM replacement
-kubectl patch sealedvolume my-volume --type='merge' -p='{"spec":{"attestation":{"akPublicKey":""}}}'
+# Re-learn EK after TPM replacement (transient AK approach)
+kubectl patch sealedvolume my-volume --type='merge' -p='{"spec":{"attestation":{"ekPublicKey":""}}}'
 
 # Check current PCR enforcement status
 kubectl get sealedvolume my-volume -o jsonpath='{.spec.attestation.pcrValues.pcrs}' | jq .

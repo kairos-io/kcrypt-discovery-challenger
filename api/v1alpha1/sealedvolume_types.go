@@ -33,12 +33,11 @@ type PCRValues struct {
 }
 
 // AttestationSpec defines TPM attestation data for TOFU enrollment and verification
+// With transient AK approach, only the EK is stored as the trusted identity
 type AttestationSpec struct {
 	// EKPublicKey stores the Endorsement Key public key in PEM format
+	// This is the single trusted identity for the TPM
 	EKPublicKey string `json:"ekPublicKey,omitempty"`
-
-	// AKPublicKey stores the Attestation Key public key in PEM format
-	AKPublicKey string `json:"akPublicKey,omitempty"`
 
 	// PCRValues stores the expected PCR values for boot state verification
 	PCRValues *PCRValues `json:"pcrValues,omitempty"`

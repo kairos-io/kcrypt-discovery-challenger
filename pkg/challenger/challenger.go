@@ -265,10 +265,7 @@ func createTOFUSealedVolumeWithPCRs(reconciler *controllers.SealedVolumeReconcil
 		return fmt.Errorf("encoding EK to PEM: %w", err)
 	}
 
-	akPEM, err := encodeAKToPEM(akParams)
-	if err != nil {
-		return fmt.Errorf("encoding AK to PEM: %w", err)
-	}
+	// Note: AK is transient in the new approach, so no AK encoding needed
 
 	// Use provided PCR values or empty if none provided
 	if pcrValues == nil {
@@ -298,7 +295,6 @@ func createTOFUSealedVolumeWithPCRs(reconciler *controllers.SealedVolumeReconcil
 			Quarantined: false,
 			Attestation: &keyserverv1alpha1.AttestationSpec{
 				EKPublicKey:    ekPEM,
-				AKPublicKey:    akPEM,
 				PCRValues:      pcrValues,
 				EnrolledAt:     &currentTime,
 				LastVerifiedAt: &currentTime,
@@ -315,11 +311,6 @@ func createTOFUSealedVolume(reconciler *controllers.SealedVolumeReconciler, name
 	ekPEM, err := encodeEKToPEM(ek)
 	if err != nil {
 		return fmt.Errorf("encoding EK to PEM: %w", err)
-	}
-
-	akPEM, err := encodeAKToPEM(akParams)
-	if err != nil {
-		return fmt.Errorf("encoding AK to PEM: %w", err)
 	}
 
 	// For now, we'll store empty PCR values - they'll be populated on first successful attestation
@@ -347,7 +338,6 @@ func createTOFUSealedVolume(reconciler *controllers.SealedVolumeReconciler, name
 			Quarantined: false,
 			Attestation: &keyserverv1alpha1.AttestationSpec{
 				EKPublicKey:    ekPEM,
-				AKPublicKey:    akPEM,
 				PCRValues:      &keyserverv1alpha1.PCRValues{}, // Empty initially
 				EnrolledAt:     &currentTime,
 				LastVerifiedAt: &currentTime,
@@ -458,33 +448,33 @@ func pubBytesFromKey(pub interface{}) ([]byte, error) {
 	return data, nil
 }
 
-// verifyAKMatch compares the current AK public key with the enrolled one
-func verifyAKMatch(sealedVolume *keyserverv1alpha1.SealedVolume, currentAK *attest.AttestationParameters, logger logr.Logger) error {
-	// Get the stored AK from the SealedVolume's attestation spec
+// verifyEKMatch compares the current EK public key with the enrolled one (transient AK approach)
+func verifyEKMatch(sealedVolume *keyserverv1alpha1.SealedVolume, currentEK *attest.EK, logger logr.Logger) error {
+	// Get the stored EK from the SealedVolume's attestation spec
 	if sealedVolume.Spec.Attestation == nil {
 		return fmt.Errorf("no attestation data in SealedVolume for verification")
 	}
 
-	storedAKPEM := sealedVolume.Spec.Attestation.AKPublicKey
-	if storedAKPEM == "" {
-		return fmt.Errorf("no AK public key stored in SealedVolume for verification")
+	storedEKPEM := sealedVolume.Spec.Attestation.EKPublicKey
+	if storedEKPEM == "" {
+		return fmt.Errorf("no EK public key stored in SealedVolume for verification")
 	}
 
-	// Encode current AK to PEM for comparison
-	currentAKPEM, err := encodeAKToPEM(currentAK)
+	// Encode current EK to PEM for comparison
+	currentEKPEM, err := encodeEKToPEM(currentEK)
 	if err != nil {
-		return fmt.Errorf("encoding current AK to PEM: %w", err)
+		return fmt.Errorf("encoding current EK to PEM: %w", err)
 	}
 
-	// Compare the PEM-encoded AK public keys
-	if storedAKPEM != currentAKPEM {
-		logger.Info("AK mismatch detected",
-			"storedAKLength", len(storedAKPEM),
-			"currentAKLength", len(currentAKPEM))
-		return fmt.Errorf("AK public key does not match enrolled key - potential TPM impersonation")
+	// Compare the PEM-encoded EK public keys
+	if storedEKPEM != currentEKPEM {
+		logger.Info("EK mismatch detected",
+			"storedEKLength", len(storedEKPEM),
+			"currentEKLength", len(currentEKPEM))
+		return fmt.Errorf("EK public key does not match enrolled key - potential TPM impersonation")
 	}
 
-	logger.Info("AK verification successful - matches enrolled key")
+	logger.Info("EK verification successful - matches enrolled key")
 	return nil
 }
 
@@ -873,7 +863,7 @@ func addPartitionToExistingVolume(ctx *EnrollmentContext, attestation *ClientAtt
 	return nil
 }
 
-// verifyAttestationData verifies AK and PCR data using selective enrollment
+// verifyAttestationData verifies EK and PCR data using selective enrollment (transient AK approach)
 func verifyAttestationData(ctx *EnrollmentContext, attestation *ClientAttestation, logger logr.Logger) error {
 	// Skip verification for new enrollments (TOFU - Trust On First Use)
 	if ctx.IsNewEnrollment {
@@ -884,11 +874,15 @@ func verifyAttestationData(ctx *EnrollmentContext, attestation *ClientAttestatio
 	// For existing enrollments, perform security verification
 	logger.Info("Existing enrollment - performing security verification")
 
-	// Verify AK public key matches the enrolled one using selective enrollment
-	if err := verifyAKMatchSelective(ctx.SealedVolume, attestation.AK, logger); err != nil {
-		logger.Info("AK verification failed - potential TPM impersonation attempt", "details", err.Error())
-		return fmt.Errorf("AK verification failed: %w", err)
+	// Verify EK public key matches the enrolled one using selective enrollment (transient AK approach)
+	if err := verifyEKMatchSelective(ctx.SealedVolume, attestation.EK, logger); err != nil {
+		logger.Info("EK verification failed - potential TPM impersonation attempt", "details", err.Error())
+		return fmt.Errorf("EK verification failed: %w", err)
 	}
+
+	// Note: AK certification is already verified through the challenge-response mechanism
+	// The client must activate the credential using the transient AK, which proves the AK
+	// is authentic and was generated by the trusted EK
 
 	// Verify PCR values match the enrolled ones using selective enrollment (boot state verification)
 	if attestation.PCRValues != nil {
@@ -1108,35 +1102,35 @@ func getSealedVolumeByTPMHash(reconciler *controllers.SealedVolumeReconciler, na
 	return nil, fmt.Errorf("SealedVolume not found for TPM hash: %s", tpmHash)
 }
 
-// verifyAKMatchSelective compares the current AK public key with the enrolled one using selective enrollment logic
-func verifyAKMatchSelective(sealedVolume *keyserverv1alpha1.SealedVolume, currentAK *attest.AttestationParameters, logger logr.Logger) error {
-	// Get the stored AK from the SealedVolume's attestation spec
+// verifyEKMatchSelective compares the current EK public key with the enrolled one using selective enrollment logic (transient AK approach)
+func verifyEKMatchSelective(sealedVolume *keyserverv1alpha1.SealedVolume, currentEK *attest.EK, logger logr.Logger) error {
+	// Get the stored EK from the SealedVolume's attestation spec
 	if sealedVolume.Spec.Attestation == nil {
 		return fmt.Errorf("no attestation data in SealedVolume for verification")
 	}
 
-	storedAKPEM := sealedVolume.Spec.Attestation.AKPublicKey
+	storedEKPEM := sealedVolume.Spec.Attestation.EKPublicKey
 
-	// Empty stored AK = re-enrollment mode, accept any current AK
-	if storedAKPEM == "" {
-		logger.Info("AK re-enrollment mode: accepting any AK value")
+	// Empty stored EK = re-enrollment mode, accept any current EK
+	if storedEKPEM == "" {
+		logger.Info("EK re-enrollment mode: accepting any EK value")
 		return nil
 	}
 
-	// Non-empty stored AK = enforcement mode, require exact match
-	currentAKPEM, err := encodeAKToPEM(currentAK)
+	// Non-empty stored EK = enforcement mode, require exact match
+	currentEKPEM, err := encodeEKToPEM(currentEK)
 	if err != nil {
-		return fmt.Errorf("encoding current AK to PEM: %w", err)
+		return fmt.Errorf("encoding current EK to PEM: %w", err)
 	}
 
-	if storedAKPEM != currentAKPEM {
-		logger.Info("AK mismatch detected in enforcement mode",
-			"storedAKLength", len(storedAKPEM),
-			"currentAKLength", len(currentAKPEM))
-		return fmt.Errorf("AK public key does not match enrolled key - potential TPM impersonation")
+	if storedEKPEM != currentEKPEM {
+		logger.Info("EK mismatch detected in enforcement mode",
+			"storedEKLength", len(storedEKPEM),
+			"currentEKLength", len(currentEKPEM))
+		return fmt.Errorf("EK public key does not match enrolled key - potential TPM impersonation")
 	}
 
-	logger.Info("AK verification successful - matches enrolled key")
+	logger.Info("EK verification successful - matches enrolled key")
 	return nil
 }
 
@@ -1189,17 +1183,6 @@ func verifyPCRValuesSelective(stored, current *keyserverv1alpha1.PCRValues, logg
 func updateAttestationDataSelective(attestation *keyserverv1alpha1.AttestationSpec, currentAK *attest.AttestationParameters, currentPCRs *keyserverv1alpha1.PCRValues, logger logr.Logger) error {
 	updated := false
 
-	// Update AK if empty (re-enrollment mode)
-	if attestation.AKPublicKey == "" && currentAK != nil {
-		akPEM, err := encodeAKToPEM(currentAK)
-		if err != nil {
-			return fmt.Errorf("encoding AK to PEM for update: %w", err)
-		}
-		attestation.AKPublicKey = akPEM
-		logger.Info("Updated AK public key during selective enrollment")
-		updated = true
-	}
-
 	// Update PCR values if empty (re-enrollment mode)
 	if attestation.PCRValues != nil && currentPCRs != nil && currentPCRs.PCRs != nil {
 		if attestation.PCRValues.PCRs == nil {
@@ -1234,16 +1217,6 @@ func createInitialTOFUAttestation(currentAK *attest.AttestationParameters, curre
 	attestation := &keyserverv1alpha1.AttestationSpec{
 		EnrolledAt:     &currentTime,
 		LastVerifiedAt: &currentTime,
-	}
-
-	// Store AK if provided
-	if currentAK != nil {
-		if akPEM, err := encodeAKToPEM(currentAK); err == nil {
-			attestation.AKPublicKey = akPEM
-			logger.Info("Stored AK public key for initial TOFU enrollment")
-		} else {
-			logger.Error(err, "Failed to encode AK during TOFU enrollment")
-		}
 	}
 
 	// Store ALL provided PCRs without filtering
@@ -1292,11 +1265,11 @@ func establishAttestationConnection(w http.ResponseWriter, r *http.Request, logg
 // where an attacker has public keys but lacks access to the actual TPM chip with private keys.
 // Returns authenticated TPM data and hash for secure enrollment decisions.
 func performTPMAuthentication(conn *websocket.Conn, logger logr.Logger) (*ClientAttestation, string, error) {
-	// Protocol Step 1: Receive client's EK and AK attestation data
+	// Protocol Step 1: Receive client's EK attestation data (transient AK approach)
 	logger.Info("Waiting for client attestation data")
 	var clientData struct {
 		EKBytes []byte `json:"ek_bytes"`
-		AKBytes []byte `json:"ak_bytes"`
+		AKBytes []byte `json:"ak_bytes"` // Still sent by client but not used for verification
 	}
 	if err := conn.ReadJSON(&clientData); err != nil {
 		errorMessage(conn, logger, fmt.Errorf("reading attestation data: %w", err), "WebSocket read")
@@ -1312,7 +1285,7 @@ func performTPMAuthentication(conn *websocket.Conn, logger logr.Logger) (*Client
 	}
 	logger.Info("Successfully decoded EK from client")
 
-	// Decode AK parameters from JSON bytes
+	// Decode AK parameters from JSON bytes (for challenge generation only)
 	var akParams attest.AttestationParameters
 	if err := json.Unmarshal(clientData.AKBytes, &akParams); err != nil {
 		errorMessage(conn, logger, fmt.Errorf("unmarshaling AK parameters: %w", err), "AK decode")
@@ -1337,16 +1310,14 @@ func performTPMAuthentication(conn *websocket.Conn, logger logr.Logger) (*Client
 	}
 
 	// Protocol Step 3: Send challenge to client
-	var challenge struct {
-		EC *attest.EncryptedCredential `json:"EC"`
-	}
+	var challenge attest.EncryptedCredential
 	if err := json.Unmarshal(challengeBytes, &challenge); err != nil {
 		errorMessage(conn, logger, fmt.Errorf("unmarshaling challenge: %w", err), "Challenge unmarshal")
 		return nil, "", fmt.Errorf("unmarshaling challenge: %w", err)
 	}
 
 	challengeResp := tpm.AttestationChallengeResponse{
-		Challenge: challenge.EC,
+		Challenge: &challenge,
 	}
 
 	logger.Info("Sending challenge to client")

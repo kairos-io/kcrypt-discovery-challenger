@@ -144,12 +144,12 @@ kcrypt:
 				!strings.Contains(string(out), "\"0\": \"wrong-pcr0-value\"")
 		}, 30*time.Second, 5*time.Second).Should(BeTrue())
 
-		// Continue with AK Management testing
-		By("Testing AK re-enrollment by setting AK to empty")
-		updateSealedVolumeAttestation(tpmHash, "akPublicKey", "")
+		// Continue with EK Management testing (transient AK approach)
+		By("Testing EK re-enrollment by setting EK to empty")
+		updateSealedVolumeAttestation(tpmHash, "ekPublicKey", "")
 
-		By("Verifying AK was re-enrolled with actual value")
-		var learnedAK, learnedEK string
+		By("Verifying EK was re-enrolled with actual value")
+		var learnedEK string
 		Eventually(func() bool {
 			sealedVolumeName := getSealedVolumeName(tpmHash)
 			cmd := exec.Command("kubectl", "get", "sealedvolume", sealedVolumeName, "-o", "yaml")
@@ -158,15 +158,9 @@ kcrypt:
 				return false
 			}
 
-			// Extract learned AK and EK for later enforcement test
+			// Extract learned EK for later enforcement test
 			lines := strings.Split(string(out), "\n")
 			for _, line := range lines {
-				if strings.Contains(line, "akPublicKey:") && !strings.Contains(line, "akPublicKey: \"\"") {
-					parts := strings.Split(line, "akPublicKey:")
-					if len(parts) > 1 {
-						learnedAK = strings.TrimSpace(strings.Trim(parts[1], "\""))
-					}
-				}
 				if strings.Contains(line, "ekPublicKey:") && !strings.Contains(line, "ekPublicKey: \"\"") {
 					parts := strings.Split(line, "ekPublicKey:")
 					if len(parts) > 1 {
@@ -175,26 +169,26 @@ kcrypt:
 				}
 			}
 
-			return learnedAK != "" && learnedEK != ""
+			return learnedEK != ""
 		}, 30*time.Second, 5*time.Second).Should(BeTrue())
 
-		// Test AK enforcement by setting wrong AK
-		By("Testing AK enforcement by setting wrong AK value")
-		updateSealedVolumeAttestation(tpmHash, "akPublicKey", "wrong-ak-value")
+		// Test EK enforcement by setting wrong EK
+		By("Testing EK enforcement by setting wrong EK value")
+		updateSealedVolumeAttestation(tpmHash, "ekPublicKey", "wrong-ek-value")
 
 		time.Sleep(5 * time.Second)
 
-		// Should fail to retrieve passphrase with wrong AK for both partitions
+		// Should fail to retrieve passphrase with wrong EK for both partitions
 		expectPassphraseRetrieval(testVM, "COS_PERSISTENT", false)
 		expectPassphraseRetrieval(testVM, "COS_OEM", false)
 
-		// Restore correct AK and verify it works via CLI
-		By("Restoring correct AK and verifying authentication works for both partitions")
-		updateSealedVolumeAttestation(tpmHash, "akPublicKey", learnedAK)
+		// Restore correct EK and verify it works via CLI
+		By("Restoring correct EK and verifying authentication works for both partitions")
+		updateSealedVolumeAttestation(tpmHash, "ekPublicKey", learnedEK)
 
 		time.Sleep(5 * time.Second)
 
-		// Should now work with correct AK for both partitions
+		// Should now work with correct EK for both partitions
 		expectPassphraseRetrieval(testVM, "COS_PERSISTENT", true)
 		expectPassphraseRetrieval(testVM, "COS_OEM", true)
 

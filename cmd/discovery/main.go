@@ -8,7 +8,6 @@ import (
 
 	"github.com/jaypipes/ghw/pkg/block"
 	"github.com/kairos-io/kairos-challenger/cmd/discovery/client"
-	"github.com/kairos-io/kairos-challenger/pkg/constants"
 	"github.com/kairos-io/kairos-sdk/kcrypt/bus"
 	"github.com/kairos-io/kairos-sdk/types"
 	"github.com/kairos-io/tpm-helpers"
@@ -113,7 +112,7 @@ Default behavior:
 		},
 	}
 
-	cmd.Flags().StringVar(&nvIndex, "nv-index", "", fmt.Sprintf("NV index to clean up (defaults to configured index or %s)", constants.LocalPassphraseNVIndex))
+	cmd.Flags().StringVar(&nvIndex, "nv-index", "", "NV index to clean up (defaults to configured index or 0x1500000)")
 	cmd.Flags().StringVar(&tpmDevice, "tpm-device", "", "TPM device path (defaults to configured device or system default)")
 	cmd.Flags().BoolVar(&skipConfirmation, "i-know-what-i-am-doing", false, "Skip confirmation prompt (DANGEROUS: may make encrypted disks unbootable)")
 
@@ -235,9 +234,9 @@ func runTPMHash() error {
 		// Continue with defaults - not a fatal error
 	}
 
-	// Initialize AK Manager with TPM NV storage
-	logger.Debugf("Initializing AK Manager with TPM NV index: %s", constants.AKBlobNVIndex)
-	akManagerOpts := []tpm.Option{tpm.WithAKHandleNV(constants.AKBlobNVIndex)}
+	// Initialize AK Manager for transient AK approach
+	logger.Debugf("Initializing AK Manager for transient AK approach")
+	akManagerOpts := []tpm.Option{}
 	if config != nil && config.Config.Kcrypt.Challenger.TPMDevice != "" {
 		logger.Debugf("Using TPM device: %s", config.Config.Kcrypt.Challenger.TPMDevice)
 		akManagerOpts = append(akManagerOpts, tpm.WithTPMDevice(config.Config.Kcrypt.Challenger.TPMDevice))
@@ -248,19 +247,11 @@ func runTPMHash() error {
 	}
 	logger.Debugf("AK Manager initialized successfully")
 
-	// Ensure AK exists (create if necessary)
-	logger.Debugf("Getting or creating AK")
-	_, err = akManager.GetOrCreateAK()
+	// Get EK for attestation (transient AK approach)
+	logger.Debugf("Getting EK for attestation")
+	ek, err := akManager.GetEK()
 	if err != nil {
-		return fmt.Errorf("getting/creating AK: %w", err)
-	}
-	logger.Debugf("AK obtained/created successfully")
-
-	// Get attestation data (includes EK)
-	logger.Debugf("Getting attestation data")
-	ek, _, err := akManager.GetAttestationData()
-	if err != nil {
-		return fmt.Errorf("getting attestation data: %w", err)
+		return fmt.Errorf("getting EK: %w", err)
 	}
 	logger.Debugf("Attestation data retrieved successfully")
 
@@ -419,7 +410,7 @@ func runCleanup(nvIndex, tpmDevice string, skipConfirmation bool) error {
 		if config.Kcrypt.Challenger.NVIndex != "" {
 			targetIndex = config.Kcrypt.Challenger.NVIndex
 		} else {
-			targetIndex = constants.LocalPassphraseNVIndex
+			targetIndex = "0x1500000" // Default local passphrase NV index
 		}
 	}
 

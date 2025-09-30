@@ -16,8 +16,6 @@ import (
 	"github.com/kairos-io/kairos-sdk/types"
 	"github.com/kairos-io/tpm-helpers"
 	"github.com/mudler/go-pluggable"
-
-	"github.com/kairos-io/kairos-challenger/pkg/constants"
 )
 
 // Retry delays for different failure types
@@ -100,37 +98,45 @@ func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders 
 	attestationEndpoint := fmt.Sprintf("%s/tpm-attestation", serverURL)
 	c.Logger.Debugf("Debug: TPM attestation endpoint: %s", attestationEndpoint)
 
+	// Step 1: Initialize AK Manager (outside the retry loop)
+	c.Logger.Debugf("Debug: Initializing AK Manager")
+	akManagerOpts := []tpm.Option{}
+	if c.Config.Kcrypt.Challenger.TPMDevice != "" {
+		c.Logger.Debugf("Debug: Using TPM device: %s", c.Config.Kcrypt.Challenger.TPMDevice)
+		akManagerOpts = append(akManagerOpts, tpm.WithTPMDevice(c.Config.Kcrypt.Challenger.TPMDevice))
+	}
+	akManager, err := tpm.NewAKManager(akManagerOpts...)
+	if err != nil {
+		return "", fmt.Errorf("failed to create AK manager: %w", err)
+	}
+	c.Logger.Debugf("Debug: AK Manager initialized successfully")
+	c.Logger.Debugf("Debug: AKManager pointer: %p", akManager)
+
+	// Ensure AKManager is properly closed when done
+	defer func() {
+		if closeErr := akManager.Close(); closeErr != nil {
+			c.Logger.Debugf("Warning: Failed to close AK manager: %v", closeErr)
+		}
+	}()
+
 	for tries := 0; tries < attempts; tries++ {
 		c.Logger.Debugf("Debug: TPM attestation attempt %d/%d", tries+1, attempts)
 
-		// Step 1: Initialize AK Manager
-		c.Logger.Debugf("Debug: Initializing AK Manager with TPM NV index: %s", constants.AKBlobNVIndex)
-		akManagerOpts := []tpm.Option{tpm.WithAKHandleNV(constants.AKBlobNVIndex)}
-		if c.Config.Kcrypt.Challenger.TPMDevice != "" {
-			c.Logger.Debugf("Debug: Using TPM device: %s", c.Config.Kcrypt.Challenger.TPMDevice)
-			akManagerOpts = append(akManagerOpts, tpm.WithTPMDevice(c.Config.Kcrypt.Challenger.TPMDevice))
-		}
-		akManager, err := tpm.NewAKManager(akManagerOpts...)
+		// Step 2: Create new transient AK for this attestation
+		c.Logger.Debugf("Debug: Creating new transient AK")
+		c.Logger.Debugf("Debug: About to call CreateTransientAK")
+		ak, akParams, err := akManager.CreateTransientAK()
 		if err != nil {
-			c.Logger.Debugf("Failed to create AK manager: %v", err)
+			c.Logger.Debugf("Failed to create transient AK: %v", err)
 			time.Sleep(TPMRetryDelay)
 			continue
 		}
-		c.Logger.Debugf("Debug: AK Manager initialized successfully")
-
-		// Step 2: Ensure AK exists
-		c.Logger.Debugf("Debug: Getting or creating AK")
-		_, err = akManager.GetOrCreateAK()
-		if err != nil {
-			c.Logger.Debugf("Failed to get/create AK: %v", err)
-			time.Sleep(TPMRetryDelay)
-			continue
-		}
-		c.Logger.Debugf("Debug: AK obtained/created successfully")
+		c.Logger.Debugf("Debug: Transient AK created successfully")
+		c.Logger.Debugf("Debug: AK pointer: %p", ak)
 
 		// Step 3: Start WebSocket-based attestation flow
 		c.Logger.Debugf("Debug: Starting WebSocket-based attestation flow")
-		passphrase, err := c.performTPMAttestation(attestationEndpoint, additionalHeaders, akManager, p)
+		passphrase, err := c.performTPMAttestation(attestationEndpoint, additionalHeaders, akManager, ak, akParams, p)
 		if err != nil {
 			c.Logger.Debugf("Failed TPM attestation: %v", err)
 			time.Sleep(NetworkRetryDelay)
@@ -144,7 +150,7 @@ func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders 
 }
 
 // performTPMAttestation handles the complete attestation flow over a single WebSocket connection
-func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[string]string, akManager *tpm.AKManager, p *block.Partition) (string, error) {
+func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[string]string, akManager *tpm.AKManager, ak *attest.AK, akParams *attest.AttestationParameters, p *block.Partition) (string, error) {
 	c.Logger.Debugf("Debug: Creating WebSocket connection to endpoint: %s", endpoint)
 	c.Logger.Debugf("Debug: Partition details - Label: %s, Name: %s, UUID: %s", p.FilesystemLabel, p.Name, p.UUID)
 	c.Logger.Debugf("Debug: Certificate length: %d", len(c.Config.Kcrypt.Challenger.Certificate))
@@ -207,12 +213,12 @@ func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[st
 	defer conn.Close() //nolint:errcheck
 
 	// Protocol Step 1: Send attestation data (EK + AK) to server so it can generate proper challenge
-	c.Logger.Debugf("Debug: Getting attestation data for challenge generation")
-	ek, akParams, err := akManager.GetAttestationData()
+	c.Logger.Debugf("Debug: Getting EK for challenge generation")
+	ek, err := akManager.GetEK()
 	if err != nil {
-		return "", fmt.Errorf("getting attestation data: %w", err)
+		return "", fmt.Errorf("getting EK: %w", err)
 	}
-	c.Logger.Debugf("Debug: Got EK and AK attestation data")
+	c.Logger.Debugf("Debug: Got EK attestation data")
 
 	// Serialize EK to bytes using the existing encoding from tmp-helpers
 	ekPEM, err := encodeEKToBytes(ek)
@@ -220,7 +226,7 @@ func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[st
 		return "", fmt.Errorf("encoding EK to bytes: %w", err)
 	}
 
-	// Serialize AK parameters to JSON bytes
+	// Serialize AK parameters to JSON bytes (using the transient AK parameters)
 	akBytes, err := json.Marshal(akParams)
 	if err != nil {
 		return "", fmt.Errorf("marshaling AK parameters: %w", err)
@@ -249,10 +255,12 @@ func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[st
 	}
 	c.Logger.Debugf("Challenge received")
 
-	// Protocol Step 3: Create proof request using AK Manager
+	// Protocol Step 3: Create proof request using transient AK
 	c.Logger.Debugf("Debug: Creating proof request from challenge response")
-	proofReq, err := akManager.CreateProofRequest(&challengeResp)
+	c.Logger.Debugf("Debug: About to call CreateProofRequestWithAK")
+	proofReq, err := akManager.CreateProofRequestWithAK(&challengeResp, ak)
 	if err != nil {
+		c.Logger.Debugf("Debug: CreateProofRequestWithAK failed: %v", err)
 		return "", fmt.Errorf("creating proof request: %w", err)
 	}
 	c.Logger.Debugf("Debug: Proof request created successfully")
