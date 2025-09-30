@@ -1,11 +1,10 @@
 package client
 
 import (
+	"github.com/kairos-io/kairos-challenger/pkg/constants"
 	"github.com/kairos-io/tpm-helpers"
 	"github.com/mudler/yip/pkg/utils"
 )
-
-const DefaultNVIndex = "0x1500000"
 
 func genAndStore(k Config) (string, error) {
 	opts := []tpm.TPMOption{}
@@ -22,7 +21,7 @@ func genAndStore(k Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	nvindex := DefaultNVIndex
+	nvindex := constants.LocalPassphraseNVIndex
 	if k.Kcrypt.Challenger.NVIndex != "" {
 		nvindex = k.Kcrypt.Challenger.NVIndex
 	}
@@ -31,7 +30,7 @@ func genAndStore(k Config) (string, error) {
 }
 
 func localPass(k Config) (string, error) {
-	index := DefaultNVIndex
+	index := constants.LocalPassphraseNVIndex
 	if k.Kcrypt.Challenger.NVIndex != "" {
 		index = k.Kcrypt.Challenger.NVIndex
 	}

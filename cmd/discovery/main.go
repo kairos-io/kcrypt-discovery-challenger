@@ -113,7 +113,7 @@ Default behavior:
 		},
 	}
 
-	cmd.Flags().StringVar(&nvIndex, "nv-index", "", fmt.Sprintf("NV index to clean up (defaults to configured index or %s)", client.DefaultNVIndex))
+	cmd.Flags().StringVar(&nvIndex, "nv-index", "", fmt.Sprintf("NV index to clean up (defaults to configured index or %s)", constants.LocalPassphraseNVIndex))
 	cmd.Flags().StringVar(&tpmDevice, "tpm-device", "", "TPM device path (defaults to configured device or system default)")
 	cmd.Flags().BoolVar(&skipConfirmation, "i-know-what-i-am-doing", false, "Skip confirmation prompt (DANGEROUS: may make encrypted disks unbootable)")
 
@@ -228,9 +228,21 @@ func runTPMHash() error {
 		logger = types.NewKairosLogger("kcrypt-discovery-challenger", "error", false)
 	}
 
-	// Initialize AK Manager with the standard handle file
-	logger.Debugf("Initializing AK Manager with handle file: %s", constants.AKBlobFile)
-	akManager, err := tpm.NewAKManager(tpm.WithAKHandleFile(constants.AKBlobFile))
+	// Load configuration to get TPM device
+	config, err := client.NewClientWithLogger(logger)
+	if err != nil {
+		logger.Debugf("Warning: Could not load configuration: %v", err)
+		// Continue with defaults - not a fatal error
+	}
+
+	// Initialize AK Manager with TPM NV storage
+	logger.Debugf("Initializing AK Manager with TPM NV index: %s", constants.AKBlobNVIndex)
+	akManagerOpts := []tpm.Option{tpm.WithAKHandleNV(constants.AKBlobNVIndex)}
+	if config != nil && config.Config.Kcrypt.Challenger.TPMDevice != "" {
+		logger.Debugf("Using TPM device: %s", config.Config.Kcrypt.Challenger.TPMDevice)
+		akManagerOpts = append(akManagerOpts, tpm.WithTPMDevice(config.Config.Kcrypt.Challenger.TPMDevice))
+	}
+	akManager, err := tpm.NewAKManager(akManagerOpts...)
 	if err != nil {
 		return fmt.Errorf("creating AK manager: %w", err)
 	}
@@ -407,7 +419,7 @@ func runCleanup(nvIndex, tpmDevice string, skipConfirmation bool) error {
 		if config.Kcrypt.Challenger.NVIndex != "" {
 			targetIndex = config.Kcrypt.Challenger.NVIndex
 		} else {
-			targetIndex = client.DefaultNVIndex
+			targetIndex = constants.LocalPassphraseNVIndex
 		}
 	}
 
