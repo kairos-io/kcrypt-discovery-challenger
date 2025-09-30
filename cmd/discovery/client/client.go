@@ -104,8 +104,13 @@ func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders 
 		c.Logger.Debugf("Debug: TPM attestation attempt %d/%d", tries+1, attempts)
 
 		// Step 1: Initialize AK Manager
-		c.Logger.Debugf("Debug: Initializing AK Manager with handle file: %s", constants.AKBlobFile)
-		akManager, err := tpm.NewAKManager(tpm.WithAKHandleFile(constants.AKBlobFile))
+		c.Logger.Debugf("Debug: Initializing AK Manager with TPM NV index: %s", constants.AKBlobNVIndex)
+		akManagerOpts := []tpm.Option{tpm.WithAKHandleNV(constants.AKBlobNVIndex)}
+		if c.Config.Kcrypt.Challenger.TPMDevice != "" {
+			c.Logger.Debugf("Debug: Using TPM device: %s", c.Config.Kcrypt.Challenger.TPMDevice)
+			akManagerOpts = append(akManagerOpts, tpm.WithTPMDevice(c.Config.Kcrypt.Challenger.TPMDevice))
+		}
+		akManager, err := tpm.NewAKManager(akManagerOpts...)
 		if err != nil {
 			c.Logger.Debugf("Failed to create AK manager: %v", err)
 			time.Sleep(TPMRetryDelay)

@@ -259,6 +259,8 @@ github.com/kairos-io/tpm-helpers v0.0.0-20250924070049-3fc80287ea6d h1:/6gpMD5vM
 github.com/kairos-io/tpm-helpers v0.0.0-20250924070049-3fc80287ea6d/go.mod h1:zOtMRZ4zGpy+qL6W1N0LrczM/9T0sdoaJ1K5PgfchAs=
 github.com/kairos-io/tpm-helpers v0.0.0-20250924104130-49f51e390ef3 h1:MGEOJRQ5jABovQVanHNKbK4nLPnAXSusrTr7Jtqw+x4=
 github.com/kairos-io/tpm-helpers v0.0.0-20250924104130-49f51e390ef3/go.mod h1:zOtMRZ4zGpy+qL6W1N0LrczM/9T0sdoaJ1K5PgfchAs=
+github.com/kairos-io/tpm-helpers v0.0.0-20250930061752-eed3ceb6a0f2 h1:v706jPy5qd9vzownwfPUqxqs0pgOebjWZMSRuesc4aI=
+github.com/kairos-io/tpm-helpers v0.0.0-20250930061752-eed3ceb6a0f2/go.mod h1:zOtMRZ4zGpy+qL6W1N0LrczM/9T0sdoaJ1K5PgfchAs=
 github.com/kisielk/errcheck v1.5.0/go.mod h1:pFxgyoBC7bSaBwPgfKdkLd5X25qrDl4LWUI2bnpBCr8=
 github.com/kisielk/gotool v1.0.0/go.mod h1:XhKaO+MFFWcvkIS/tQcRk01m1F5IRFswLeQ+oQHNcck=
 github.com/klauspost/compress v1.18.0 h1:c/Cqfb0r+Yi+JtIEq73FWXVkRonBlf0CRNYc8Zttxdo=
