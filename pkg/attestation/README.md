@@ -14,7 +14,7 @@ Client (node with TPM):
 Server (kcrypt-challenger):
 1) ParseInit
 2) GenerateChallenge (EK+AK only; PCRs not needed here)
-3) VerifyProof (secret + PCR quote) → proceed with selective enrollment and passphrase release
+3) VerifyProof (secret + PCR quote signature verification + PCR consistency verification) → proceed with selective enrollment and passphrase release
 
 ### Wire Messages (owned by this package)
 - AttestationInit: EK (PEM/DER), AK AttestationParameters, optional AK public
@@ -36,7 +36,7 @@ Internally, the client uses transient AKs (no persistent AK storage). It sends E
 - VerifyProof(initBytes []byte, proofBytes []byte, expectedSecret []byte) (VerificationResult, error)
 - IssuePassphrase(initBytes []byte, proofBytes []byte, expectedSecret []byte) ([]byte, error)
 
-The server accepts AttestationInit, generates an EncryptedCredential (challenge) bound to EK+AK params (no PCRs), and later verifies the secret and the PCR quote signature using the AK public contained within the attestation parameters. After verification, it delegates policy/enrollment to the injected Attestator and returns a passphrase or error.
+The server accepts AttestationInit, generates an EncryptedCredential (challenge) bound to EK+AK params (no PCRs), and later verifies the secret and the PCR quote signature using the AK public contained within the attestation parameters. The server also verifies that the provided PCR values are consistent with the TPM quote to ensure they are cryptographically bound to the quote. After verification, it delegates policy/enrollment to the injected Attestator and returns a passphrase or error.
 
 ### Selective Enrollment
 This package does not implement enrollment. The server injects an Attestator which receives final verified attestation data and decides enrollment/validation and passphrase issuance. Typical policies (for reference):
@@ -47,7 +47,9 @@ This package does not implement enrollment. The server injects an Attestator whi
 ### Implementation Notes
 - EK→AK binding is proven by successful credential activation (no separate AK certification step required).
 - PCR quote structure contains both quote/signature and the actual selected PCR values.
-- This package owns message marshalling/unmarshalling so consumers don’t need to manage encoding details.
+- PCR quote signature is cryptographically verified using the AK public key to ensure PCR authenticity.
+- PCR values are verified against the TPM quote digest to ensure they are cryptographically bound to the quote.
+- This package owns message marshalling/unmarshalling so consumers don't need to manage encoding details.
 
 ### Attestator (Injected Policy)
 The Attestator is provided by the consumer and is called after cryptographic verification succeeds. It decides selective enrollment/validation and returns the passphrase.

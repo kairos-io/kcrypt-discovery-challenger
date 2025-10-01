@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/go-attestation/attest"
 	"github.com/google/go-tpm/tpm2"
+	tpm "github.com/kairos-io/tpm-helpers"
 )
 
 type AttestationRequest struct {
@@ -100,16 +101,26 @@ func (s *RemoteAttestationServer) VerifyProof(initBytes, proofBytes, expectedSec
 		return VerificationResult{}, err
 	}
 
-	// The PCR quote is validated by server-specific logic outside this package (optional extension).
-	// Here we trust the AK public to match, and pass PCRs forward to the Attestator.
+	// Parse and verify the PCR quote
 	var pq struct {
+		Quote struct {
+			Version   string `json:"version"`
+			Quote     []byte `json:"quote"`
+			Signature []byte `json:"signature"`
+		} `json:"quote"`
 		PCRs map[int][]byte `json:"pcrs"`
 	}
 	if err := json.Unmarshal(proof.PCRQuote, &pq); err != nil {
-		return VerificationResult{}, err
+		return VerificationResult{}, fmt.Errorf("unmarshaling PCR quote: %w", err)
 	}
 
-	return VerificationResult{AKPublic: akPub, PCRs: pq.PCRs}, nil
+	// Verify the PCR quote signature and extract verified PCR values using tpm-helpers
+	verifiedPCRs, err := tpm.VerifyPCRQuote(proof.PCRQuote, akPub)
+	if err != nil {
+		return VerificationResult{}, fmt.Errorf("PCR quote verification failed: %w", err)
+	}
+
+	return VerificationResult{AKPublic: akPub, PCRs: verifiedPCRs}, nil
 }
 
 func (s *RemoteAttestationServer) IssuePassphrase(ctx context.Context, initBytes, proofBytes, expectedSecret []byte) ([]byte, error) {

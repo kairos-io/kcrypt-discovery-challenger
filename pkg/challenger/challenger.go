@@ -73,6 +73,12 @@ func (ca *ChallengerAttestator) IssuePassphrase(ctx context.Context, req attesta
 		pcrValues.PCRs[fmt.Sprintf("%d", pcrIndex)] = fmt.Sprintf("%x", pcrValue)
 	}
 
+	// Parse EK from EKPEM
+	ek, err := parseEKFromPEM(req.EKPEM)
+	if err != nil {
+		return nil, fmt.Errorf("parsing EK from EKPEM: %w", err)
+	}
+
 	// Use partition info from WebSocket headers
 	partition := ca.partition
 
@@ -90,10 +96,9 @@ func (ca *ChallengerAttestator) IssuePassphrase(ctx context.Context, req attesta
 
 	// Verify attestation data using selective enrollment
 	if err := verifyAttestationData(enrollmentContext, &ClientAttestation{
-		EK:        &attest.EK{Public: nil}, // Will be populated from EKPEM if needed
-		AK:        nil,                     // Not used in selective enrollment
+		EK:        ek,
 		PCRValues: pcrValues,
-		PCRQuote:  nil, // Not used in selective enrollment
+		PCRQuote:  nil, // Not used in enrollment (only PCR values are stored)
 	}, ca.logger); err != nil {
 		ca.logger.Info("Attestation verification failed", "error", err.Error())
 		return nil, fmt.Errorf("attestation verification failed: %w", err)
@@ -103,30 +108,27 @@ func (ca *ChallengerAttestator) IssuePassphrase(ctx context.Context, req attesta
 	if enrollmentContext.IsNewEnrollment {
 		// Perform initial TOFU enrollment for new TPMs
 		if err := performInitialEnrollment(enrollmentContext, &ClientAttestation{
-			EK:        &attest.EK{Public: nil}, // Will be populated from EKPEM if needed
-			AK:        nil,                     // Not used in selective enrollment
+			EK:        ek,
 			PCRValues: pcrValues,
-			PCRQuote:  nil, // Not used in selective enrollment
+			PCRQuote:  nil, // Not used in enrollment (only PCR values are stored)
 		}, ca.reconciler, ca.kclient, ca.namespace, ca.logger); err != nil {
 			return nil, fmt.Errorf("initial enrollment: %w", err)
 		}
 	} else if enrollmentContext.IsNewPartition {
 		// This is a new partition for an existing TPM - add partition to existing SealedVolume
 		if err := addPartitionToExistingVolume(enrollmentContext, &ClientAttestation{
-			EK:        &attest.EK{Public: nil}, // Will be populated from EKPEM if needed
-			AK:        nil,                     // Not used in selective enrollment
+			EK:        ek,
 			PCRValues: pcrValues,
-			PCRQuote:  nil, // Not used in selective enrollment
+			PCRQuote:  nil, // Not used in enrollment (only PCR values are stored)
 		}, ca.reconciler, ca.kclient, ca.namespace, ca.logger); err != nil {
 			return nil, fmt.Errorf("adding new partition: %w", err)
 		}
 	} else {
 		// Update attestation data for re-enrollment of existing TPMs
 		if err := updateEnrollmentData(enrollmentContext, &ClientAttestation{
-			EK:        &attest.EK{Public: nil}, // Will be populated from EKPEM if needed
-			AK:        nil,                     // Not used in selective enrollment
+			EK:        ek,
 			PCRValues: pcrValues,
-			PCRQuote:  nil, // Not used in selective enrollment
+			PCRQuote:  nil, // Not used in enrollment (only PCR values are stored)
 		}, ca.reconciler, ca.logger); err != nil {
 			return nil, fmt.Errorf("re-enrollment data update: %w", err)
 		}
@@ -411,9 +413,9 @@ type PartitionInfo struct {
 }
 
 // ClientAttestation holds all client-provided attestation data
+// Note: AK (Attestation Key) is not stored as we use transient AKs for enrollment
 type ClientAttestation struct {
 	EK        *attest.EK
-	AK        *attest.AttestationParameters
 	PCRQuote  []byte
 	PCRValues *keyserverv1alpha1.PCRValues
 }
@@ -471,6 +473,44 @@ func pubBytesFromKey(pub interface{}) ([]byte, error) {
 		return nil, fmt.Errorf("error marshaling public key: %v", err)
 	}
 	return data, nil
+}
+
+// parseEKFromPEM parses EKPEM bytes into an attest.EK with populated Public field
+func parseEKFromPEM(ekPEM []byte) (*attest.EK, error) {
+	if len(ekPEM) == 0 {
+		return nil, fmt.Errorf("EKPEM is empty")
+	}
+
+	// Try to parse as PEM first
+	block, _ := pem.Decode(ekPEM)
+	if block != nil {
+		// It's PEM format
+		if block.Type == "CERTIFICATE" {
+			// EK certificate
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				return nil, fmt.Errorf("parsing EK certificate: %w", err)
+			}
+			return &attest.EK{
+				Certificate: cert,
+				Public:      cert.PublicKey,
+			}, nil
+		} else if block.Type == "PUBLIC KEY" {
+			// EK public key
+			pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+			if err != nil {
+				return nil, fmt.Errorf("parsing EK public key: %w", err)
+			}
+			return &attest.EK{Public: pub}, nil
+		}
+	}
+
+	// Try to parse as raw DER
+	pub, err := x509.ParsePKIXPublicKey(ekPEM)
+	if err != nil {
+		return nil, fmt.Errorf("parsing EK as DER: %w", err)
+	}
+	return &attest.EK{Public: pub}, nil
 }
 
 // verifyEKMatch compares the current EK public key with the enrolled one (transient AK approach)
@@ -796,7 +836,7 @@ func performInitialEnrollment(ctx *EnrollmentContext, attestation *ClientAttesta
 	}
 
 	// Create attestation data using initial TOFU logic (stores ALL provided PCRs)
-	attestationSpec := createInitialTOFUAttestation(attestation.AK, attestation.PCRValues, logger)
+	attestationSpec := createInitialTOFUAttestation(attestation.PCRValues, logger)
 
 	// Extract EK in PEM format for storage
 	ekPEM, err := encodeEKToPEM(attestation.EK)
@@ -935,7 +975,7 @@ func updateEnrollmentData(ctx *EnrollmentContext, attestation *ClientAttestation
 	if ctx.SealedVolume.Spec.Attestation != nil {
 		logger.Info("Updating attestation data for re-enrollment mode fields")
 
-		if err := updateAttestationDataSelective(ctx.SealedVolume.Spec.Attestation, attestation.AK, attestation.PCRValues, logger); err != nil {
+		if err := updateAttestationDataSelective(ctx.SealedVolume.Spec.Attestation, attestation.PCRValues, logger); err != nil {
 			return fmt.Errorf("updating selective attestation data: %w", err)
 		}
 
@@ -1207,7 +1247,7 @@ func verifyPCRValuesSelective(stored, current *keyserverv1alpha1.PCRValues, logg
 }
 
 // updateAttestationDataSelective updates empty attestation fields with current values during selective enrollment
-func updateAttestationDataSelective(attestation *keyserverv1alpha1.AttestationSpec, currentAK *attest.AttestationParameters, currentPCRs *keyserverv1alpha1.PCRValues, logger logr.Logger) error {
+func updateAttestationDataSelective(attestation *keyserverv1alpha1.AttestationSpec, currentPCRs *keyserverv1alpha1.PCRValues, logger logr.Logger) error {
 	updated := false
 
 	// Update PCR values if empty (re-enrollment mode)
@@ -1238,7 +1278,7 @@ func updateAttestationDataSelective(attestation *keyserverv1alpha1.AttestationSp
 }
 
 // createInitialTOFUAttestation creates attestation spec for initial TOFU enrollment, storing ALL provided PCRs
-func createInitialTOFUAttestation(currentAK *attest.AttestationParameters, currentPCRs *keyserverv1alpha1.PCRValues, logger logr.Logger) *keyserverv1alpha1.AttestationSpec {
+func createInitialTOFUAttestation(currentPCRs *keyserverv1alpha1.PCRValues, logger logr.Logger) *keyserverv1alpha1.AttestationSpec {
 	currentTime := metav1.Now()
 
 	attestation := &keyserverv1alpha1.AttestationSpec{
