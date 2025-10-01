@@ -2,13 +2,14 @@ module github.com/kairos-io/kairos-challenger
 
 go 1.25
 
-replace github.com/kairos-io/tpm-helpers => github.com/kairos-io/tpm-helpers v0.0.0-20250930133009-d34010d55a7d
+replace github.com/kairos-io/tpm-helpers => github.com/kairos-io/tpm-helpers v0.0.0-20251001115943-f41123a07b58
 
 //replace github.com/kairos-io/tpm-helpers => /home/dimitris/workspace/kairos/tpm-helpers
 
 require (
 	github.com/go-logr/logr v1.4.3
 	github.com/google/go-attestation v0.5.1
+	github.com/google/go-tpm v0.9.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/mdns v1.0.6
@@ -85,7 +86,6 @@ require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-configfs-tsm v0.3.3 // indirect
 	github.com/google/go-containerregistry v0.20.6 // indirect
-	github.com/google/go-tpm v0.9.1 // indirect
 	github.com/google/go-tpm-tools v0.4.4 // indirect
 	github.com/google/go-tspi v0.3.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect

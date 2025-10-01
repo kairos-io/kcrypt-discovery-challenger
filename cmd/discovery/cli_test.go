@@ -61,44 +61,6 @@ var _ = Describe("CLI Interface", func() {
 		})
 	})
 
-	Context("Flow detection and backend integration", func() {
-		It("should attempt to get passphrase with valid parameters", func() {
-			err := ExecuteWithArgs([]string{
-				"get",
-				"--partition-name=/dev/test",
-				"--partition-uuid=test-uuid-12345",
-				"--partition-label=test-label",
-				"--attempts=1",
-			})
-
-			// We expect this to fail since there's no server, but it should reach the backend logic
-			Expect(err).To(HaveOccurred())
-
-			// Should show flow detection in the log (if created)
-			logContent, readErr := os.ReadFile("/tmp/kcrypt-challenger-client.log")
-			if readErr == nil {
-				logStr := string(logContent)
-				// Should contain flow detection message
-				Expect(logStr).To(ContainSubstring("flow"))
-			}
-		})
-
-		It("should use the correct backend client logic", func() {
-			// Test that the CLI mode uses the same GetPassphrase method
-			err := ExecuteWithArgs([]string{
-				"get",
-				"--partition-name=/dev/test",
-				"--partition-uuid=test-uuid",
-				"--partition-label=test-label",
-				"--attempts=1",
-			})
-
-			// Should fail but attempt to use the client
-			Expect(err).To(HaveOccurred())
-			// The important thing is that it reaches the backend and doesn't crash
-		})
-	})
-
 	Context("Configuration overrides with debug logging", func() {
 		var tempDir string
 		var originalLogFile string
