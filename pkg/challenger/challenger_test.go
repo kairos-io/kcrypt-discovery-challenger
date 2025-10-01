@@ -194,7 +194,7 @@ var _ = Describe("challenger", func() {
 					Expect(attestation.PCRValues.PCRs["11"]).To(Equal(""))
 
 					// Re-enrollment should store the current PCR values
-					err := updateAttestationDataSelective(attestation, nil, currentPCRs, logger)
+					err := updateAttestationDataSelective(attestation, currentPCRs, logger)
 					Expect(err).To(BeNil())
 
 					// After re-enrollment: PCRs should be stored with exact expected values
@@ -225,7 +225,7 @@ var _ = Describe("challenger", func() {
 					attestation := &keyserverv1alpha1.AttestationSpec{
 						PCRValues: storedPCRs,
 					}
-					err = updateAttestationDataSelective(attestation, nil, limitedCurrentPCRs, logger)
+					err = updateAttestationDataSelective(attestation, limitedCurrentPCRs, logger)
 					Expect(err).To(BeNil())
 
 					// Verify PCR0 was enrolled and no other PCRs were added
@@ -358,7 +358,7 @@ var _ = Describe("challenger", func() {
 				}
 
 				// Call the function under test
-				err := updateAttestationDataSelective(attestation, nil, currentPCRs, logger)
+				err := updateAttestationDataSelective(attestation, currentPCRs, logger)
 				Expect(err).To(BeNil())
 
 				// Check results: PCR0 should be updated (was empty)
@@ -385,7 +385,7 @@ var _ = Describe("challenger", func() {
 					},
 				}
 
-				attestation := createInitialTOFUAttestation(nil, clientPCRs, logger)
+				attestation := createInitialTOFUAttestation(clientPCRs, logger)
 
 				// All provided PCRs should be stored
 				Expect(attestation.PCRValues).ToNot(BeNil())
@@ -407,7 +407,7 @@ var _ = Describe("challenger", func() {
 					},
 				}
 
-				attestation := createInitialTOFUAttestation(nil, clientPCRs, logger)
+				attestation := createInitialTOFUAttestation(clientPCRs, logger)
 
 				Expect(attestation.PCRValues.PCRs).To(HaveKey("11"))
 				Expect(attestation.PCRValues.PCRs).To(HaveKey("12"))

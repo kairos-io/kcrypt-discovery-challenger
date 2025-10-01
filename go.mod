@@ -2,7 +2,7 @@ module github.com/kairos-io/kairos-challenger
 
 go 1.25
 
-replace github.com/kairos-io/tpm-helpers => github.com/kairos-io/tpm-helpers v0.0.0-20251001140949-3ed603715ea4
+replace github.com/kairos-io/tpm-helpers => github.com/kairos-io/tpm-helpers v0.0.0-20251001144412-acbdbb81bf49
 
 //replace github.com/kairos-io/tpm-helpers => /home/dimitris/workspace/kairos/tpm-helpers
 
