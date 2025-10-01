@@ -12,6 +12,7 @@ import (
 	"github.com/google/go-attestation/attest"
 	"github.com/gorilla/websocket"
 	"github.com/jaypipes/ghw/pkg/block"
+	"github.com/kairos-io/kairos-challenger/pkg/attestation"
 	"github.com/kairos-io/kairos-sdk/kcrypt/bus"
 	"github.com/kairos-io/kairos-sdk/types"
 	"github.com/kairos-io/tpm-helpers"
@@ -98,45 +99,32 @@ func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders 
 	attestationEndpoint := fmt.Sprintf("%s/tpm-attestation", serverURL)
 	c.Logger.Debugf("Debug: TPM attestation endpoint: %s", attestationEndpoint)
 
-	// Step 1: Initialize AK Manager (outside the retry loop)
-	c.Logger.Debugf("Debug: Initializing AK Manager")
-	akManagerOpts := []tpm.Option{}
+	// Step 1: Initialize Remote Attestation Client (outside the retry loop)
+	c.Logger.Debugf("Debug: Initializing Remote Attestation Client")
+	clientOpts := []tpm.Option{}
 	if c.Config.Kcrypt.Challenger.TPMDevice != "" {
 		c.Logger.Debugf("Debug: Using TPM device: %s", c.Config.Kcrypt.Challenger.TPMDevice)
-		akManagerOpts = append(akManagerOpts, tpm.WithTPMDevice(c.Config.Kcrypt.Challenger.TPMDevice))
+		clientOpts = append(clientOpts, tpm.WithTPMDevice(c.Config.Kcrypt.Challenger.TPMDevice))
 	}
-	akManager, err := tpm.NewAKManager(akManagerOpts...)
+	attestationClient, err := attestation.NewRemoteAttestationClient(clientOpts...)
 	if err != nil {
-		return "", fmt.Errorf("failed to create AK manager: %w", err)
+		return "", fmt.Errorf("failed to create attestation client: %w", err)
 	}
-	c.Logger.Debugf("Debug: AK Manager initialized successfully")
-	c.Logger.Debugf("Debug: AKManager pointer: %p", akManager)
+	c.Logger.Debugf("Debug: Remote Attestation Client initialized successfully")
 
-	// Ensure AKManager is properly closed when done
+	// Ensure client is properly closed when done
 	defer func() {
-		if closeErr := akManager.Close(); closeErr != nil {
-			c.Logger.Debugf("Warning: Failed to close AK manager: %v", closeErr)
+		if closeErr := attestationClient.Close(); closeErr != nil {
+			c.Logger.Debugf("Warning: Failed to close attestation client: %v", closeErr)
 		}
 	}()
 
 	for tries := 0; tries < attempts; tries++ {
 		c.Logger.Debugf("Debug: TPM attestation attempt %d/%d", tries+1, attempts)
 
-		// Step 2: Create new transient AK for this attestation
-		c.Logger.Debugf("Debug: Creating new transient AK")
-		c.Logger.Debugf("Debug: About to call CreateTransientAK")
-		ak, akParams, err := akManager.CreateTransientAK()
-		if err != nil {
-			c.Logger.Debugf("Failed to create transient AK: %v", err)
-			time.Sleep(TPMRetryDelay)
-			continue
-		}
-		c.Logger.Debugf("Debug: Transient AK created successfully")
-		c.Logger.Debugf("Debug: AK pointer: %p", ak)
-
-		// Step 3: Start WebSocket-based attestation flow
+		// Step 2: Start WebSocket-based attestation flow
 		c.Logger.Debugf("Debug: Starting WebSocket-based attestation flow")
-		passphrase, err := c.performTPMAttestation(attestationEndpoint, additionalHeaders, akManager, ak, akParams, p)
+		passphrase, err := c.performTPMAttestation(attestationEndpoint, additionalHeaders, attestationClient, p)
 		if err != nil {
 			c.Logger.Debugf("Failed TPM attestation: %v", err)
 			time.Sleep(NetworkRetryDelay)
@@ -150,7 +138,7 @@ func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders 
 }
 
 // performTPMAttestation handles the complete attestation flow over a single WebSocket connection
-func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[string]string, akManager *tpm.AKManager, ak *attest.AK, akParams *attest.AttestationParameters, p *block.Partition) (string, error) {
+func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[string]string, attestationClient *attestation.RemoteAttestationClient, p *block.Partition) (string, error) {
 	c.Logger.Debugf("Debug: Creating WebSocket connection to endpoint: %s", endpoint)
 	c.Logger.Debugf("Debug: Partition details - Label: %s, Name: %s, UUID: %s", p.FilesystemLabel, p.Name, p.UUID)
 	c.Logger.Debugf("Debug: Certificate length: %d", len(c.Config.Kcrypt.Challenger.Certificate))
@@ -212,80 +200,61 @@ func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[st
 
 	defer conn.Close() //nolint:errcheck
 
-	// Protocol Step 1: Send attestation data (EK + AK) to server so it can generate proper challenge
-	c.Logger.Debugf("Debug: Getting EK for challenge generation")
-	ek, err := akManager.GetEK()
+	// Protocol Step 1: Create attestation init
+	c.Logger.Debugf("Debug: Creating attestation init")
+	initBytes, err := attestationClient.CreateInit()
 	if err != nil {
-		return "", fmt.Errorf("getting EK: %w", err)
+		return "", fmt.Errorf("creating attestation init: %w", err)
 	}
-	c.Logger.Debugf("Debug: Got EK attestation data")
+	c.Logger.Debugf("Debug: Attestation init created successfully")
 
-	// Serialize EK to bytes using the existing encoding from tmp-helpers
-	ekPEM, err := encodeEKToBytes(ek)
-	if err != nil {
-		return "", fmt.Errorf("encoding EK to bytes: %w", err)
+	// Send attestation init to server
+	c.Logger.Debugf("Debug: Sending attestation init to server")
+	if err := conn.WriteMessage(websocket.BinaryMessage, initBytes); err != nil {
+		return "", fmt.Errorf("sending attestation init: %w", err)
 	}
-
-	// Serialize AK parameters to JSON bytes (using the transient AK parameters)
-	akBytes, err := json.Marshal(akParams)
-	if err != nil {
-		return "", fmt.Errorf("marshaling AK parameters: %w", err)
-	}
-
-	// Send attestation data to server as bytes
-	attestationData := struct {
-		EKBytes []byte `json:"ek_bytes"`
-		AKBytes []byte `json:"ak_bytes"`
-	}{
-		EKBytes: ekPEM,
-		AKBytes: akBytes,
-	}
-
-	c.Logger.Debugf("Debug: Sending attestation data to server")
-	if err := conn.WriteJSON(attestationData); err != nil {
-		return "", fmt.Errorf("sending attestation data: %w", err)
-	}
-	c.Logger.Debugf("Debug: Attestation data sent successfully")
+	c.Logger.Debugf("Debug: Attestation init sent successfully")
 
 	// Protocol Step 2: Wait for challenge response from server
 	c.Logger.Debugf("Debug: Waiting for challenge from server")
-	var challengeResp tpm.AttestationChallengeResponse
-	if err := conn.ReadJSON(&challengeResp); err != nil {
+	_, challengeBytes, err := conn.ReadMessage()
+	if err != nil {
 		return "", fmt.Errorf("reading challenge from server: %w", err)
 	}
 	c.Logger.Debugf("Challenge received")
 
-	// Protocol Step 3: Create proof request using transient AK
-	c.Logger.Debugf("Debug: Creating proof request from challenge response")
-	c.Logger.Debugf("Debug: About to call CreateProofRequestWithAK")
-	proofReq, err := akManager.CreateProofRequestWithAK(&challengeResp, ak)
+	// Protocol Step 3: Handle challenge
+	c.Logger.Debugf("Debug: Handling challenge")
+	// Use default PCRs for now - this could be made configurable
+	pcrs := []int{0, 7, 11} // Common PCRs used in the system
+	proofBytes, err := attestationClient.HandleChallenge(challengeBytes, pcrs)
 	if err != nil {
-		c.Logger.Debugf("Debug: CreateProofRequestWithAK failed: %v", err)
-		return "", fmt.Errorf("creating proof request: %w", err)
+		c.Logger.Debugf("Debug: HandleChallenge failed: %v", err)
+		return "", fmt.Errorf("handling challenge: %w", err)
 	}
-	c.Logger.Debugf("Debug: Proof request created successfully")
+	c.Logger.Debugf("Debug: Challenge handled successfully")
 
 	// Protocol Step 4: Send proof to server
-	c.Logger.Debugf("Debug: Sending proof request to server")
-	if err := conn.WriteJSON(proofReq); err != nil {
-		return "", fmt.Errorf("sending proof request: %w", err)
+	c.Logger.Debugf("Debug: Sending proof to server")
+	if err := conn.WriteMessage(websocket.BinaryMessage, proofBytes); err != nil {
+		return "", fmt.Errorf("sending proof: %w", err)
 	}
-	c.Logger.Debugf("Proof request sent")
+	c.Logger.Debugf("Proof sent")
 
 	// Protocol Step 5: Receive passphrase from server
 	c.Logger.Debugf("Debug: Waiting for passphrase response")
-	var proofResp tpm.ProofResponse
-	if err := conn.ReadJSON(&proofResp); err != nil {
+	_, passphraseBytes, err := conn.ReadMessage()
+	if err != nil {
 		return "", fmt.Errorf("reading passphrase response: %w", err)
 	}
-	c.Logger.Debugf("Passphrase received - Length: %d bytes", len(proofResp.Passphrase))
+	c.Logger.Debugf("Passphrase received - Length: %d bytes", len(passphraseBytes))
 
 	// Check if we received an empty passphrase (indicates server error)
-	if len(proofResp.Passphrase) == 0 {
+	if len(passphraseBytes) == 0 {
 		return "", fmt.Errorf("server returned empty passphrase, indicating an error occurred during attestation")
 	}
 
-	return string(proofResp.Passphrase), nil
+	return string(passphraseBytes), nil
 }
 
 // decryptPassphrase decodes (base64) and decrypts the passphrase returned

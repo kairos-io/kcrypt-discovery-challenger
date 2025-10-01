@@ -8,6 +8,7 @@ import (
 
 	"github.com/jaypipes/ghw/pkg/block"
 	"github.com/kairos-io/kairos-challenger/cmd/discovery/client"
+	attpkg "github.com/kairos-io/kairos-challenger/pkg/attestation"
 	"github.com/kairos-io/kairos-sdk/kcrypt/bus"
 	"github.com/kairos-io/kairos-sdk/types"
 	"github.com/kairos-io/tpm-helpers"
@@ -255,9 +256,9 @@ func runTPMHash() error {
 	}
 	logger.Debugf("Attestation data retrieved successfully")
 
-	// Compute TPM hash from EK
+	// Compute TPM hash from EK using attestation helper (SHA-256 of EK SPKI)
 	logger.Debugf("Computing TPM hash from EK")
-	tpmHash, err := tpm.DecodePubHash(ek)
+	tpmHash, err := attpkg.ComputeTPMHashFromEK(ek)
 	if err != nil {
 		return fmt.Errorf("computing TPM hash: %w", err)
 	}
