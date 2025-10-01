@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"math/big"
 
@@ -137,11 +138,17 @@ func (s *RemoteAttestationServer) IssuePassphrase(ctx context.Context, initBytes
 	if err != nil {
 		return nil, err
 	}
+	// Encode EK to PEM for the attestator
+	ekPEM, err := EncodeEKToPEM(ek)
+	if err != nil {
+		return nil, fmt.Errorf("encoding EK to PEM: %w", err)
+	}
+
 	// Build request for Attestator
 	req := AttestationRequest{
 		TPMHash: tpmHash,
 		PCRs:    vr.PCRs,
-		// EKPEM optional: if needed, fill with a canonical form
+		EKPEM:   ekPEM,
 	}
 	return s.attestator.IssuePassphrase(ctx, req)
 }
@@ -216,4 +223,28 @@ func akPublicFromParams(params *attest.AttestationParameters) (crypto.PublicKey,
 	default:
 		return nil, fmt.Errorf("unsupported key type: %v", pub.Type)
 	}
+}
+
+// EncodeEKToPEM encodes an EK to PEM format
+func EncodeEKToPEM(ek *attest.EK) ([]byte, error) {
+	if ek.Certificate != nil {
+		// If we have a certificate, encode it as PEM
+		pemBlock := &pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: ek.Certificate.Raw,
+		}
+		return pem.EncodeToMemory(pemBlock), nil
+	}
+
+	// Otherwise, encode the public key as PEM
+	data, err := x509.MarshalPKIXPublicKey(ek.Public)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling EK public key: %w", err)
+	}
+
+	pemBlock := &pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: data,
+	}
+	return pem.EncodeToMemory(pemBlock), nil
 }
