@@ -255,6 +255,21 @@ The system supports two distinct enrollment behaviors:
 
 ### SealedVolume API Examples
 
+#### **Attestation Configuration Options Summary**
+
+| Configuration | EK Behavior | PCR Behavior | Use Case |
+|--------------|-------------|--------------|----------|
+| **No `spec.attestation`** | Learn all | Learn all PCRs | Pure TOFU / Static passphrase setup |
+| **`attestation: {}`** | Learn EK, enforce | Skip all PCRs | EK-only verification (no boot state) |
+| **`attestation: { ekPublicKey: "", pcrValues: { pcrs: { "0": "", "7": "" } } }`** | Learn EK, enforce | Learn & enforce PCR 0, 7 only | Selective PCR tracking |
+| **`attestation: { ekPublicKey: "abc...", pcrValues: { pcrs: { "0": "def..." } } }`** | Enforce exact match | Enforce exact PCR 0 | Full enforcement mode |
+
+**Key Points:**
+- `nil` (omitted field) = Learn everything via TOFU
+- Empty object `{}` or empty string `""` = Learn on first use, then enforce
+- Set value `"abc123..."` = Strict enforcement (exact match required)
+- Omitted from map = Skip entirely (never verify, never store)
+
 #### **Example 1: Initial TOFU Enrollment**
 When no SealedVolume exists, the server automatically creates one with ALL received PCRs:
 
@@ -383,8 +398,7 @@ spec:
         name: "my-passphrase"
         path: "passphrase"
   attestation:
-    ekPublicKey: ""          # Re-enrollment mode
-    akPublicKey: ""          # Re-enrollment mode
+    ekPublicKey: ""          # Re-enrollment mode (will learn EK on first boot)
     pcrValues:
       pcrs:
         "0": ""              # Re-enrollment mode (will learn)
@@ -393,9 +407,23 @@ spec:
 ```
 
 **Behavior**: The system will:
+- Learn and enforce the EK on first attestation
 - Learn and enforce PCRs 0 and 7 on first attestation
 - Completely ignore PCR 11 (never verify, never store)
 - Allow flexible boot stages without PCR 11 interference
+
+**Alternative - Omit ALL PCRs**:
+```yaml
+# Learn EK only, skip ALL PCR verification
+spec:
+  attestation: {}            # Empty object = learn EK, ignore all PCRs
+```
+
+**Behavior**: The system will:
+- Learn and enforce the EK (TPM identity)
+- Accept any PCR values without verification
+- Never store or track PCR values
+- Useful when boot state verification is not needed
 
 #### **Scenario 4: Kernel Upgrade - Temporary PCR Re-enrollment**
 

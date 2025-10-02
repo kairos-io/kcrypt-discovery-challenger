@@ -938,6 +938,19 @@ func verifyAttestationData(ctx *EnrollmentContext, attestation *ClientAttestatio
 		return nil
 	}
 
+	// Also skip verification if SealedVolume exists but has no attestation data
+	// This supports two scenarios:
+	// 1. Static passphrase setup: Operator creates Secret + SealedVolume with TPM hash only,
+	//    letting the system learn ALL attestation data (EK, AK, all PCRs) via TOFU
+	// 2. Secret reuse: After deleting and recreating a SealedVolume, the system reuses the
+	//    existing Secret and re-learns attestation data
+	// Note: If operator wants selective PCR tracking, they should create Spec.Attestation
+	// with specific PCRs (empty or set), and omit unwanted PCRs from the map
+	if ctx.SealedVolume != nil && ctx.SealedVolume.Spec.Attestation == nil {
+		logger.Info("SealedVolume exists but has no attestation data - treating as initial TOFU enrollment")
+		return nil
+	}
+
 	// For existing enrollments, perform security verification
 	logger.Info("Existing enrollment - performing security verification")
 
@@ -971,24 +984,47 @@ func verifyAttestationData(ctx *EnrollmentContext, attestation *ClientAttestatio
 
 // updateEnrollmentData updates attestation data for re-enrollment of existing TPMs
 func updateEnrollmentData(ctx *EnrollmentContext, attestation *ClientAttestation, reconciler *controllers.SealedVolumeReconciler, logger logr.Logger) error {
-	// Update any re-enrollment mode fields (empty values)
-	if ctx.SealedVolume.Spec.Attestation != nil {
-		logger.Info("Updating attestation data for re-enrollment mode fields")
+	// If no attestation data exists, create initial TOFU attestation
+	// This handles the case where an operator creates a SealedVolume without attestation data
+	// (e.g., for static passphrase setup or after SealedVolume recreation)
+	if ctx.SealedVolume.Spec.Attestation == nil {
+		logger.Info("No attestation data in SealedVolume - initializing TOFU attestation")
 
-		if err := updateAttestationDataSelective(ctx.SealedVolume.Spec.Attestation, attestation.PCRValues, logger); err != nil {
-			return fmt.Errorf("updating selective attestation data: %w", err)
+		// Create attestation data using initial TOFU logic (stores ALL provided PCRs)
+		// Note: If operator wants selective PCR tracking, they should pre-create Spec.Attestation
+		// with only desired PCRs, leaving unwanted PCRs omitted from the map
+		attestationSpec := createInitialTOFUAttestation(attestation.PCRValues, logger)
+
+		// Extract EK in PEM format for storage
+		ekPEM, err := encodeEKToPEM(attestation.EK)
+		if err != nil {
+			return fmt.Errorf("encoding EK to PEM: %w", err)
 		}
+		attestationSpec.EKPublicKey = ekPEM
 
-		// Update the SealedVolume resource if changes were made
+		// Update the SealedVolume with the new attestation data
+		ctx.SealedVolume.Spec.Attestation = attestationSpec
 		if err := reconciler.Update(context.TODO(), ctx.SealedVolume); err != nil {
-			return fmt.Errorf("updating SealedVolume with new attestation data: %w", err)
+			return fmt.Errorf("updating SealedVolume with initial attestation data: %w", err)
 		}
 
-		logger.Info("Successfully updated attestation data")
-	} else {
-		logger.Info("No attestation data to update")
+		logger.Info("Successfully initialized attestation data for existing SealedVolume")
+		return nil
 	}
 
+	// Update any re-enrollment mode fields (empty values)
+	logger.Info("Updating attestation data for re-enrollment mode fields")
+
+	if err := updateAttestationDataSelective(ctx.SealedVolume.Spec.Attestation, attestation, logger); err != nil {
+		return fmt.Errorf("updating selective attestation data: %w", err)
+	}
+
+	// Update the SealedVolume resource if changes were made
+	if err := reconciler.Update(context.TODO(), ctx.SealedVolume); err != nil {
+		return fmt.Errorf("updating SealedVolume with new attestation data: %w", err)
+	}
+
+	logger.Info("Successfully updated attestation data")
 	return nil
 }
 
@@ -1247,10 +1283,26 @@ func verifyPCRValuesSelective(stored, current *keyserverv1alpha1.PCRValues, logg
 }
 
 // updateAttestationDataSelective updates empty attestation fields with current values during selective enrollment
-func updateAttestationDataSelective(attestation *keyserverv1alpha1.AttestationSpec, currentPCRs *keyserverv1alpha1.PCRValues, logger logr.Logger) error {
+// This handles both EK and PCR re-enrollment according to the selective enrollment policy:
+// - Empty string ("") = re-enrollment mode, accept and store current value
+// - Set value = enforcement mode, already verified to match
+// - Omitted (nil/not in map) = skip entirely
+func updateAttestationDataSelective(attestation *keyserverv1alpha1.AttestationSpec, clientAttestation *ClientAttestation, logger logr.Logger) error {
 	updated := false
 
+	// Update EK if it's in re-enrollment mode (empty string)
+	if attestation.EKPublicKey == "" {
+		ekPEM, err := encodeEKToPEM(clientAttestation.EK)
+		if err != nil {
+			return fmt.Errorf("encoding EK to PEM: %w", err)
+		}
+		attestation.EKPublicKey = ekPEM
+		logger.Info("Updated EK during selective enrollment (was in re-enrollment mode)")
+		updated = true
+	}
+
 	// Update PCR values if empty (re-enrollment mode)
+	currentPCRs := clientAttestation.PCRValues
 	if attestation.PCRValues != nil && currentPCRs != nil && currentPCRs.PCRs != nil {
 		if attestation.PCRValues.PCRs == nil {
 			attestation.PCRValues.PCRs = make(map[string]string)
