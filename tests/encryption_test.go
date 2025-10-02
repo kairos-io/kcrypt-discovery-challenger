@@ -214,11 +214,18 @@ kcrypt:
 	// https://kairos.io/docs/advanced/partition_encryption/#scenario-static-keys
 	When("using a remote key management server (static keys)", Label("remote-static"), func() {
 		var tpmHash string
+		var sealedVolumeName string
+		var secretName string
 		var err error
 
 		BeforeEach(func() {
 			tpmHash, err = vm.Sudo("/system/discovery/kcrypt-discovery-challenger")
 			Expect(err).ToNot(HaveOccurred(), tpmHash)
+			tpmHash = strings.TrimSpace(tpmHash)
+
+			// Use safe Kubernetes names (TPM hash is 64 chars, exceeds 63 char limit)
+			sealedVolumeName = getSealedVolumeName(tpmHash)
+			secretName = fmt.Sprintf("%s-cos-persistent", sealedVolumeName)
 
 			kubectlApplyYaml(fmt.Sprintf(`---
 apiVersion: v1
@@ -228,8 +235,8 @@ metadata:
   namespace: default
 type: Opaque
 stringData:
-  pass: "awesome-plaintext-passphrase"
-`, tpmHash))
+  passphrase: "awesome-plaintext-passphrase"
+`, secretName))
 
 			kubectlApplyYaml(fmt.Sprintf(`---
 apiVersion: keyserver.kairos.io/v1alpha1
@@ -238,14 +245,14 @@ metadata:
     name: %[1]s
     namespace: default
 spec:
-  TPMHash: "%[1]s"
+  TPMHash: "%[2]s"
   partitions:
     - label: COS_PERSISTENT
       secret:
-       name: %[1]s
-       path: pass
+       name: %[3]s
+       path: passphrase
   quarantined: false
-`, tpmHash))
+`, sealedVolumeName, tpmHash, secretName))
 
 			config = fmt.Sprintf(`#cloud-config
 
@@ -268,12 +275,11 @@ kcrypt:
 		})
 
 		AfterEach(func() {
-			sealedVolumeName := getSealedVolumeName(tpmHash)
 			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
 			out, err := cmd.CombinedOutput()
 			Expect(err).ToNot(HaveOccurred(), out)
 
-			cmd = exec.Command("kubectl", "delete", "secret", tpmHash)
+			cmd = exec.Command("kubectl", "delete", "secret", secretName)
 			out, err = cmd.CombinedOutput()
 			Expect(err).ToNot(HaveOccurred(), out)
 		})
@@ -404,6 +410,10 @@ func createConfigWithCert(server, cert string) client.Config {
 func createTPMPassphraseSecret(vm VM) string {
 	tpmHash, err := vm.Sudo("/system/discovery/kcrypt-discovery-challenger")
 	Expect(err).ToNot(HaveOccurred(), tpmHash)
+	tpmHash = strings.TrimSpace(tpmHash)
+
+	// Use safe Kubernetes name (TPM hash is 64 chars, exceeds 63 char limit)
+	sealedVolumeName := getSealedVolumeName(tpmHash)
 
 	kubectlApplyYaml(fmt.Sprintf(`---
 apiVersion: keyserver.kairos.io/v1alpha1
@@ -412,11 +422,11 @@ metadata:
   name: "%[1]s"
   namespace: default
 spec:
-  TPMHash: "%[1]s"
+  TPMHash: "%[2]s"
   partitions:
     - label: COS_PERSISTENT
   quarantined: false
-`, strings.TrimSpace(tpmHash)))
+`, sealedVolumeName, tpmHash))
 
 	return tpmHash
 }
