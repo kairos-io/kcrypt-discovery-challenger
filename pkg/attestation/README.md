@@ -44,6 +44,12 @@ This package does not implement enrollment. The server injects an Attestator whi
 - Set value: enforce exact match (strict)
 - Omitted: skip entirely
 
+**Note on Initial Enrollment Scenarios:**
+The Attestator implementation (e.g., ChallengerAttestator in pkg/challenger/) may support additional enrollment scenarios:
+- **No attestation data**: When a SealedVolume exists without any attestation section, this typically indicates a "static passphrase setup" where the operator has pre-created a Secret but wants the system to learn ALL attestation data (EK, AK, all PCRs) via TOFU on first connection.
+- **Partial attestation data**: When attestation exists with specific PCR entries (empty or set), only those PCRs are tracked. PCRs omitted from the map are ignored entirely.
+- **Secret reuse**: When a SealedVolume is deleted and recreated without attestation, the system reuses existing Secrets and re-learns attestation data.
+
 ### Implementation Notes
 - EK→AK binding is proven by successful credential activation (no separate AK certification step required).
 - PCR quote structure contains both quote/signature and the actual selected PCR values.

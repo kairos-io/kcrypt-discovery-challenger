@@ -5,14 +5,26 @@
 package challenger
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
 	"net/http"
 	"net/http/httptest"
 
 	"github.com/go-logr/logr"
+	"github.com/google/go-attestation/attest"
 	keyserverv1alpha1 "github.com/kairos-io/kairos-challenger/api/v1alpha1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+// generateTestRSAPublicKey generates a dummy RSA public key for testing
+func generateTestRSAPublicKey() *rsa.PublicKey {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic("Failed to generate test RSA key: " + err.Error())
+	}
+	return &privateKey.PublicKey
+}
 
 var _ = Describe("challenger", func() {
 	Describe("findSecretFor", func() {
@@ -193,9 +205,13 @@ var _ = Describe("challenger", func() {
 					Expect(attestation.PCRValues.PCRs["7"]).To(Equal(""))
 					Expect(attestation.PCRValues.PCRs["11"]).To(Equal(""))
 
-					// Re-enrollment should store the current PCR values
-					err := updateAttestationDataSelective(attestation, currentPCRs, logger)
-					Expect(err).To(BeNil())
+				// Re-enrollment should store the current PCR values
+				clientAttestation := &ClientAttestation{
+					EK:        &attest.EK{Public: generateTestRSAPublicKey()},
+					PCRValues: currentPCRs,
+				}
+				err := updateAttestationDataSelective(attestation, clientAttestation, logger)
+				Expect(err).To(BeNil())
 
 					// After re-enrollment: PCRs should be stored with exact expected values
 					Expect(attestation.PCRValues.PCRs["0"]).To(Equal(expectedPCR0))
@@ -221,12 +237,17 @@ var _ = Describe("challenger", func() {
 					err := verifyPCRValuesSelective(storedPCRs, limitedCurrentPCRs, logger)
 					Expect(err).To(BeNil())
 
-					// Step 2: Re-enroll - store the PCR value (should only update the empty PCR0)
-					attestation := &keyserverv1alpha1.AttestationSpec{
-						PCRValues: storedPCRs,
-					}
-					err = updateAttestationDataSelective(attestation, limitedCurrentPCRs, logger)
-					Expect(err).To(BeNil())
+				// Step 2: Re-enroll - store the PCR value (should only update the empty PCR0)
+				attestation := &keyserverv1alpha1.AttestationSpec{
+					EKPublicKey: "existing-ek", // Set so it won't try to update
+					PCRValues:   storedPCRs,
+				}
+				clientAttestation := &ClientAttestation{
+					EK:        &attest.EK{Public: generateTestRSAPublicKey()},
+					PCRValues: limitedCurrentPCRs,
+				}
+				err = updateAttestationDataSelective(attestation, clientAttestation, logger)
+				Expect(err).To(BeNil())
 
 					// Verify PCR0 was enrolled and no other PCRs were added
 					Expect(storedPCRs.PCRs["0"]).To(Equal(expectedPCR0))
@@ -337,6 +358,52 @@ var _ = Describe("challenger", func() {
 		})
 
 		Describe("updateAttestationDataSelective", func() {
+			It("should update empty EK field with current value", func() {
+				// Set up test data - EK in re-enrollment mode (empty)
+				attestation := &keyserverv1alpha1.AttestationSpec{
+					EKPublicKey: "", // Empty = should be updated
+				}
+
+				// Create a mock EK with a real RSA public key
+				mockEK := &attest.EK{
+					Public: generateTestRSAPublicKey(),
+				}
+
+				clientAttestation := &ClientAttestation{
+					EK: mockEK,
+				}
+
+				// Call the function under test
+				err := updateAttestationDataSelective(attestation, clientAttestation, logger)
+				Expect(err).To(BeNil())
+
+				// Check results: EK should be updated (was empty)
+				Expect(attestation.EKPublicKey).ToNot(Equal(""))
+			})
+
+			It("should NOT update set EK field", func() {
+				// Set up test data - EK already set
+				existingEK := "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...\n-----END PUBLIC KEY-----"
+				attestation := &keyserverv1alpha1.AttestationSpec{
+					EKPublicKey: existingEK, // Set = should NOT be updated
+				}
+
+				mockEK := &attest.EK{
+					Public: generateTestRSAPublicKey(),
+				}
+
+				clientAttestation := &ClientAttestation{
+					EK: mockEK,
+				}
+
+				// Call the function under test
+				err := updateAttestationDataSelective(attestation, clientAttestation, logger)
+				Expect(err).To(BeNil())
+
+				// Check results: EK should NOT be updated (was already set)
+				Expect(attestation.EKPublicKey).To(Equal(existingEK))
+			})
+
 			It("should update empty PCR fields with current values", func() {
 				// Set up test data
 				currentPCRs := &keyserverv1alpha1.PCRValues{
@@ -347,19 +414,24 @@ var _ = Describe("challenger", func() {
 					},
 				}
 
-				attestation := &keyserverv1alpha1.AttestationSpec{
-					PCRValues: &keyserverv1alpha1.PCRValues{
-						PCRs: map[string]string{
-							"0":  "",                 // Empty = should be updated
-							"7":  "fixed_pcr7_value", // Set = should NOT be updated
-							"11": "",                 // Empty = should be updated
-						},
+			attestation := &keyserverv1alpha1.AttestationSpec{
+				EKPublicKey: "existing-ek", // Set so it won't try to update
+				PCRValues: &keyserverv1alpha1.PCRValues{
+					PCRs: map[string]string{
+						"0":  "",                 // Empty = should be updated
+						"7":  "fixed_pcr7_value", // Set = should NOT be updated
+						"11": "",                 // Empty = should be updated
 					},
-				}
+				},
+			}
 
-				// Call the function under test
-				err := updateAttestationDataSelective(attestation, currentPCRs, logger)
-				Expect(err).To(BeNil())
+			// Call the function under test
+			clientAttestation := &ClientAttestation{
+				EK:        &attest.EK{Public: generateTestRSAPublicKey()},
+				PCRValues: currentPCRs,
+			}
+			err := updateAttestationDataSelective(attestation, clientAttestation, logger)
+			Expect(err).To(BeNil())
 
 				// Check results: PCR0 should be updated (was empty)
 				Expect(attestation.PCRValues.PCRs["0"]).To(Equal("new_pcr0_value"))
