@@ -13,7 +13,7 @@ build-challenger:
     FROM +go-deps
     COPY . /work
     WORKDIR /work
-    RUN CGO_ENABLED=0 go build -o kcrypt-discovery-challenger ./cmd/discovery
+    RUN CGO_ENABLED=1 go build -o kcrypt-discovery-challenger ./cmd/discovery
     SAVE ARTIFACT /work/kcrypt-discovery-challenger kcrypt-discovery-challenger AS LOCAL kcrypt-discovery-challenger
 
 image:
@@ -40,6 +40,8 @@ go-deps:
     ARG GO_VERSION
     FROM golang:$GO_VERSION
     WORKDIR /build
+    # Install OpenSSL development libraries needed for TPM simulator
+    RUN apt-get update && apt-get install -y libssl-dev && rm -rf /var/lib/apt/lists/*
     COPY go.mod go.sum ./
     RUN go mod download
     RUN go mod verify
@@ -48,7 +50,7 @@ go-deps:
 
 test:
     FROM +go-deps
-    ENV CGO_ENABLED=0
+    ENV CGO_ENABLED=1
     WORKDIR /work
 
     COPY . .
