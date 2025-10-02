@@ -97,7 +97,8 @@ jobs:
         run: |
           sudo apt update && \
           sudo apt install -y git qemu-system-x86 qemu-utils swtpm jq make glibc-tools \
-          openssl curl gettext ca-certificates curl gnupg lsb-release build-essential
+          openssl curl gettext ca-certificates curl gnupg lsb-release build-essential \
+          libssl-dev
 
           export ISO=$PWD/$(ls *.iso)
           # update controllers
