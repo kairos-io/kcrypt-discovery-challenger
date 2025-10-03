@@ -129,7 +129,7 @@ func (ca *ChallengerAttestator) IssuePassphrase(ctx context.Context, req attesta
 			EK:        ek,
 			PCRValues: pcrValues,
 			PCRQuote:  nil, // Not used in enrollment (only PCR values are stored)
-		}, ca.reconciler, ca.logger); err != nil {
+		}, ca.reconciler, ca.kclient, ca.namespace, ca.logger); err != nil {
 			return nil, fmt.Errorf("re-enrollment data update: %w", err)
 		}
 	}
@@ -983,12 +983,64 @@ func verifyAttestationData(ctx *EnrollmentContext, attestation *ClientAttestatio
 }
 
 // updateEnrollmentData updates attestation data for re-enrollment of existing TPMs
-func updateEnrollmentData(ctx *EnrollmentContext, attestation *ClientAttestation, reconciler *controllers.SealedVolumeReconciler, logger logr.Logger) error {
+func updateEnrollmentData(ctx *EnrollmentContext, attestation *ClientAttestation, reconciler *controllers.SealedVolumeReconciler, kclient *kubernetes.Clientset, namespace string, logger logr.Logger) error {
 	// If no attestation data exists, create initial TOFU attestation
 	// This handles the case where an operator creates a SealedVolume without attestation data
 	// (e.g., for static passphrase setup or after SealedVolume recreation)
 	if ctx.SealedVolume.Spec.Attestation == nil {
 		logger.Info("No attestation data in SealedVolume - initializing TOFU attestation")
+
+		// Check if we also need to create a secret (when partition has no secret reference)
+		needsSecretCreation := ctx.VolumeData.SecretName == "" && ctx.VolumeData.SecretPath == ""
+
+		if needsSecretCreation {
+			// This is like a new enrollment - create secret + attestation
+			// WARN: This is an unusual scenario - normally operators create SealedVolume without attestation
+			// when they want to pre-define the passphrase (static secret). Creating both secret + attestation
+			// is more of a "deferred TOFU" scenario (operator creates empty SealedVolume, lets system generate everything)
+			logger.Info("WARNING: Unusual enrollment scenario detected - creating both secret and attestation",
+				"scenario", "deferred-TOFU",
+				"sealedVolume", ctx.SealedVolume.Name,
+				"reason", "SealedVolume has no attestation AND no secret reference",
+				"action", "auto-generating passphrase and learning all attestation data",
+				"recommendation", "If you intended to use a static passphrase, pre-create a Secret and reference it in the partition spec")
+
+			// Generate secret name and path using DefaultSecret logic
+			volumeData := SealedVolumeData{
+				PartitionLabel: ctx.Partition.Label,
+				VolumeName:     ctx.SealedVolume.Name,
+			}
+			secretName, secretPath := volumeData.DefaultSecret()
+
+			// Generate secure passphrase for enrollment
+			passphrase, err := generateTOFUPassphrase()
+			if err != nil {
+				return fmt.Errorf("generating TOFU passphrase: %w", err)
+			}
+
+			// Create Kubernetes secret (or reuse if it already exists)
+			logger.Info("Creating TOFU secret for SealedVolume without secret reference", "secretName", secretName, "secretPath", secretPath)
+			_, err = createOrReuseTOFUSecret(kclient, namespace, secretName, secretPath, passphrase, ctx.TPMHash, ctx.Partition.Label, logger)
+			if err != nil {
+				return fmt.Errorf("creating TOFU secret: %w", err)
+			}
+
+			// Update the partition in SealedVolume to reference the new secret
+			for i := range ctx.SealedVolume.Spec.Partitions {
+				p := &ctx.SealedVolume.Spec.Partitions[i]
+				if p.Label == ctx.Partition.Label {
+					p.Secret = &keyserverv1alpha1.SecretSpec{
+						Name: secretName,
+						Path: secretPath,
+					}
+					break
+				}
+			}
+
+			// Update VolumeData so the caller can retrieve the passphrase
+			ctx.VolumeData.SecretName = secretName
+			ctx.VolumeData.SecretPath = secretPath
+		}
 
 		// Create attestation data using initial TOFU logic (stores ALL provided PCRs)
 		// Note: If operator wants selective PCR tracking, they should pre-create Spec.Attestation
@@ -1002,7 +1054,7 @@ func updateEnrollmentData(ctx *EnrollmentContext, attestation *ClientAttestation
 		}
 		attestationSpec.EKPublicKey = ekPEM
 
-		// Update the SealedVolume with the new attestation data
+		// Update the SealedVolume with the new attestation data (and possibly secret reference)
 		ctx.SealedVolume.Spec.Attestation = attestationSpec
 		if err := reconciler.Update(context.TODO(), ctx.SealedVolume); err != nil {
 			return fmt.Errorf("updating SealedVolume with initial attestation data: %w", err)
@@ -1013,6 +1065,7 @@ func updateEnrollmentData(ctx *EnrollmentContext, attestation *ClientAttestation
 	}
 
 	// Update any re-enrollment mode fields (empty values)
+	// Note: VolumeData should already be set by determineEnrollmentContext from the existing partition
 	logger.Info("Updating attestation data for re-enrollment mode fields")
 
 	if err := updateAttestationDataSelective(ctx.SealedVolume.Spec.Attestation, attestation, logger); err != nil {

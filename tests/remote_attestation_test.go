@@ -51,7 +51,9 @@ var _ = Describe("Remote Attestation E2E Tests", Label("remote-complete-workflow
 hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
-passwd: kairos
+  passwd: kairos
+	groups:
+	  - admin
 
 install:
   encrypted_partitions:

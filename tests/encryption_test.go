@@ -90,6 +90,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -143,6 +145,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 `
 		})
 
@@ -167,6 +171,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -227,6 +233,7 @@ kcrypt:
 			sealedVolumeName = getSealedVolumeName(tpmHash)
 			secretName = fmt.Sprintf("%s-cos-persistent", sealedVolumeName)
 
+			By(fmt.Sprintf("Creating secret with name: %s", secretName))
 			kubectlApplyYaml(fmt.Sprintf(`---
 apiVersion: v1
 kind: Secret
@@ -238,6 +245,19 @@ stringData:
   passphrase: "awesome-plaintext-passphrase"
 `, secretName))
 
+			// Verify secret was created
+			By(fmt.Sprintf("Waiting for secret %s to be ready", secretName))
+			Eventually(func() bool {
+				exists := secretExists(secretName)
+				if !exists {
+					GinkgoWriter.Printf("Secret %s does not exist yet, waiting...\n", secretName)
+				}
+				return exists
+			}, 10*time.Second, 1*time.Second).Should(BeTrue(), fmt.Sprintf("Secret %s should exist", secretName))
+
+			By(fmt.Sprintf("Secret %s verified to exist", secretName))
+
+			By(fmt.Sprintf("Creating SealedVolume with name: %s, TPM hash: %s", sealedVolumeName, tpmHash[:16]+"..."))
 			kubectlApplyYaml(fmt.Sprintf(`---
 apiVersion: keyserver.kairos.io/v1alpha1
 kind: SealedVolume
@@ -260,6 +280,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -310,6 +332,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -353,6 +377,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:

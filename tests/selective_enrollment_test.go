@@ -80,6 +80,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -201,6 +203,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -289,6 +293,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -406,6 +412,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
