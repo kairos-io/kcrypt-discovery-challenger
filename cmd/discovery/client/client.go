@@ -56,7 +56,7 @@ func (c *Client) Start(eventType pluggable.EventType) error {
 		}
 
 		// Use the extracted core logic
-		pass, err := c.GetPassphrase(b, 3)
+		pass, err := c.GetPassphrase(b, 30)
 		if err != nil {
 			return pluggable.EventResponse{
 				Error: fmt.Sprintf("failed getting pass: %s", err.Error()),

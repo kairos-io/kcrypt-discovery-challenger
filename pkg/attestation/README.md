@@ -45,10 +45,28 @@ This package does not implement enrollment. The server injects an Attestator whi
 - Omitted: skip entirely
 
 **Note on Initial Enrollment Scenarios:**
-The Attestator implementation (e.g., ChallengerAttestator in pkg/challenger/) may support additional enrollment scenarios:
-- **No attestation data**: When a SealedVolume exists without any attestation section, this typically indicates a "static passphrase setup" where the operator has pre-created a Secret but wants the system to learn ALL attestation data (EK, AK, all PCRs) via TOFU on first connection.
-- **Partial attestation data**: When attestation exists with specific PCR entries (empty or set), only those PCRs are tracked. PCRs omitted from the map are ignored entirely.
-- **Secret reuse**: When a SealedVolume is deleted and recreated without attestation, the system reuses existing Secrets and re-learns attestation data.
+The Attestator implementation (e.g., ChallengerAttestator in pkg/challenger/) may support additional enrollment scenarios when a SealedVolume exists without attestation data:
+
+1. **Static passphrase setup (recommended)**: 
+   - Operator creates: SealedVolume (no attestation) + Secret (pre-defined passphrase) + partition references Secret
+   - System learns: EK, AK, all PCRs via TOFU on first connection
+   - Secret: Pre-defined, controlled by operator
+
+2. **Secret reuse**: 
+   - Operator recreates SealedVolume (no attestation) after deletion, partition references existing Secret
+   - System learns: EK, AK, all PCRs via TOFU
+   - Secret: Reused from previous enrollment
+
+3. **Deferred TOFU (edge case, not recommended)**:
+   - Operator creates: SealedVolume (no attestation) + no Secret reference in partition
+   - System creates: Secret (auto-generated passphrase) + learns EK, AK, all PCRs
+   - Secret: Auto-generated, operator has no control
+   - ⚠️ WARNING: This is unusual. If you want TOFU, let the system create the entire SealedVolume. If you pre-create a SealedVolume, you probably want to control the passphrase (scenario 1).
+
+4. **Partial attestation data (selective enrollment)**: 
+   - Operator creates: SealedVolume with specific PCR entries (empty or set) + Secret
+   - System tracks: Only specified PCRs, omitted PCRs are ignored entirely
+   - Secret: Pre-defined or referenced
 
 ### Implementation Notes
 - EK→AK binding is proven by successful credential activation (no separate AK certification step required).
