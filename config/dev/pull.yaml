@@ -9,4 +9,6 @@ spec:
       containers:
       - name: manager
         imagePullPolicy: IfNotPresent
+      - name: kube-rbac-proxy
+        imagePullPolicy: IfNotPresent
 

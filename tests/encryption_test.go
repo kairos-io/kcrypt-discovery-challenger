@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -21,7 +22,7 @@ var installationOutput string
 var vm VM
 var mdnsVM VM
 
-var _ = Describe("kcrypt encryption", func() {
+var _ = Describe("kcrypt encryption", Label("encryption-tests"), func() {
 	var config string
 	var vmOpts VMOptions
 	var expectedInstallationSuccess bool
@@ -90,6 +91,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -100,13 +103,14 @@ install:
 
 kcrypt:
   challenger:
-	  mdns: true
+    mdns: true
     challenger_server: "http://%[1]s"
 `, mdnsHostname)
 		})
 
 		AfterEach(func() {
-			cmd := exec.Command("kubectl", "delete", "sealedvolume", tpmHash)
+			sealedVolumeName := getSealedVolumeName(tpmHash)
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
 			out, err := cmd.CombinedOutput()
 			Expect(err).ToNot(HaveOccurred(), out)
 
@@ -142,6 +146,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 `
 		})
 
@@ -166,6 +172,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -184,7 +192,8 @@ kcrypt:
 		})
 
 		AfterEach(func() {
-			cmd := exec.Command("kubectl", "delete", "sealedvolume", tpmHash)
+			sealedVolumeName := getSealedVolumeName(tpmHash)
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
 			out, err := cmd.CombinedOutput()
 			Expect(err).ToNot(HaveOccurred(), out)
 		})
@@ -199,7 +208,7 @@ kcrypt:
 
 			// Expect a secret to be created
 			cmd := exec.Command("kubectl", "get", "secrets",
-				fmt.Sprintf("%s-cos-persistent", tpmHash),
+				fmt.Sprintf("%s-cos-persistent", getSealedVolumeName(tpmHash)),
 				"-o=go-template='{{.data.generated_by|base64decode}}'",
 			)
 
@@ -212,12 +221,20 @@ kcrypt:
 	// https://kairos.io/docs/advanced/partition_encryption/#scenario-static-keys
 	When("using a remote key management server (static keys)", Label("remote-static"), func() {
 		var tpmHash string
+		var sealedVolumeName string
+		var secretName string
 		var err error
 
 		BeforeEach(func() {
 			tpmHash, err = vm.Sudo("/system/discovery/kcrypt-discovery-challenger")
 			Expect(err).ToNot(HaveOccurred(), tpmHash)
+			tpmHash = strings.TrimSpace(tpmHash)
 
+			// Use safe Kubernetes names (TPM hash is 64 chars, exceeds 63 char limit)
+			sealedVolumeName = getSealedVolumeName(tpmHash)
+			secretName = fmt.Sprintf("%s-cos-persistent", sealedVolumeName)
+
+			By(fmt.Sprintf("Creating secret with name: %s", secretName))
 			kubectlApplyYaml(fmt.Sprintf(`---
 apiVersion: v1
 kind: Secret
@@ -226,9 +243,22 @@ metadata:
   namespace: default
 type: Opaque
 stringData:
-  pass: "awesome-plaintext-passphrase"
-`, tpmHash))
+  passphrase: "awesome-plaintext-passphrase"
+`, secretName))
 
+			// Verify secret was created
+			By(fmt.Sprintf("Waiting for secret %s to be ready", secretName))
+			Eventually(func() bool {
+				exists := secretExists(secretName)
+				if !exists {
+					GinkgoWriter.Printf("Secret %s does not exist yet, waiting...\n", secretName)
+				}
+				return exists
+			}, 10*time.Second, 1*time.Second).Should(BeTrue(), fmt.Sprintf("Secret %s should exist", secretName))
+
+			By(fmt.Sprintf("Secret %s verified to exist", secretName))
+
+			By(fmt.Sprintf("Creating SealedVolume with name: %s, TPM hash: %s", sealedVolumeName, tpmHash[:16]+"..."))
 			kubectlApplyYaml(fmt.Sprintf(`---
 apiVersion: keyserver.kairos.io/v1alpha1
 kind: SealedVolume
@@ -236,14 +266,14 @@ metadata:
     name: %[1]s
     namespace: default
 spec:
-  TPMHash: "%[1]s"
+  TPMHash: "%[2]s"
   partitions:
     - label: COS_PERSISTENT
       secret:
-       name: %[1]s
-       path: pass
+       name: %[3]s
+       path: passphrase
   quarantined: false
-`, tpmHash))
+`, sealedVolumeName, tpmHash, secretName))
 
 			config = fmt.Sprintf(`#cloud-config
 
@@ -251,6 +281,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -266,11 +298,11 @@ kcrypt:
 		})
 
 		AfterEach(func() {
-			cmd := exec.Command("kubectl", "delete", "sealedvolume", tpmHash)
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
 			out, err := cmd.CombinedOutput()
 			Expect(err).ToNot(HaveOccurred(), out)
 
-			cmd = exec.Command("kubectl", "delete", "secret", tpmHash)
+			cmd = exec.Command("kubectl", "delete", "secret", secretName)
 			out, err = cmd.CombinedOutput()
 			Expect(err).ToNot(HaveOccurred(), out)
 		})
@@ -286,31 +318,23 @@ kcrypt:
 		})
 	})
 
-	When("the key management server is listening on https", func() {
+	When("the certificate is pinned on the configuration", Label("remote-https-pinned"), func() {
 		var tpmHash string
 
 		BeforeEach(func() {
 			tpmHash = createTPMPassphraseSecret(vm)
-		})
-
-		AfterEach(func() {
-			cmd := exec.Command("kubectl", "delete", "sealedvolume", tpmHash)
-			out, err := cmd.CombinedOutput()
-			Expect(err).ToNot(HaveOccurred(), out)
-		})
-
-		When("the certificate is pinned on the configuration", Label("remote-https-pinned"), func() {
-			BeforeEach(func() {
-				cert := getChallengerServerCert()
-				kcryptConfig := createConfigWithCert(fmt.Sprintf("https://%s", os.Getenv("KMS_ADDRESS")), cert)
-				kcryptConfigBytes, err := yaml.Marshal(kcryptConfig)
-				Expect(err).ToNot(HaveOccurred())
-				config = fmt.Sprintf(`#cloud-config
+			cert := getChallengerServerCert()
+			kcryptConfig := createConfigWithCert(fmt.Sprintf("https://%s", os.Getenv("KMS_ADDRESS")), cert)
+			kcryptConfigBytes, err := yaml.Marshal(kcryptConfig)
+			Expect(err).ToNot(HaveOccurred())
+			config = fmt.Sprintf(`#cloud-config
 
 hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -322,28 +346,40 @@ install:
 %s
 
 `, string(kcryptConfigBytes))
-			})
-
-			It("successfully talks to the server", func() {
-				vm.Reboot()
-				vm.EventuallyConnects(1200)
-				out, err := vm.Sudo("blkid")
-				Expect(err).ToNot(HaveOccurred(), out)
-				Expect(out).To(MatchRegexp("TYPE=\"crypto_LUKS\" PARTLABEL=\"persistent\""), out)
-				Expect(out).To(MatchRegexp("/dev/mapper.*LABEL=\"COS_PERSISTENT\""), out)
-			})
 		})
 
-		When("the no certificate is set in the configuration", Label("remote-https-bad-cert"), func() {
-			BeforeEach(func() {
-				expectedInstallationSuccess = false
+		It("successfully talks to the server", func() {
+			vm.Reboot()
+			vm.EventuallyConnects(1200)
+			out, err := vm.Sudo("blkid")
+			Expect(err).ToNot(HaveOccurred(), out)
+			Expect(out).To(MatchRegexp("TYPE=\"crypto_LUKS\" PARTLABEL=\"persistent\""), out)
+			Expect(out).To(MatchRegexp("/dev/mapper.*LABEL=\"COS_PERSISTENT\""), out)
+		})
 
-				config = fmt.Sprintf(`#cloud-config
+		AfterEach(func() {
+			sealedVolumeName := getSealedVolumeName(tpmHash)
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
+			out, err := cmd.CombinedOutput()
+			Expect(err).ToNot(HaveOccurred(), out)
+		})
+	})
+
+	When("the no certificate is set in the configuration", Label("remote-https-bad-cert"), func() {
+		var tpmHash string
+
+		BeforeEach(func() {
+			tpmHash = createTPMPassphraseSecret(vm)
+			expectedInstallationSuccess = false
+
+			config = fmt.Sprintf(`#cloud-config
 
 hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -356,13 +392,19 @@ kcrypt:
   challenger:
     challenger_server: "https://%s"
 `, os.Getenv("KMS_ADDRESS"))
-			})
+		})
 
-			It("fails to talk to the server", func() {
-				out, err := vm.Sudo("cat manual-install.txt")
-				Expect(err).ToNot(HaveOccurred(), out)
-				Expect(out).To(MatchRegexp("failed to verify certificate: x509: certificate signed by unknown authority"))
-			})
+		It("fails to talk to the server", func() {
+			out, err := vm.Sudo("cat manual-install.txt")
+			Expect(err).ToNot(HaveOccurred(), out)
+			Expect(out).To(MatchRegexp("failed to verify certificate: x509: certificate signed by unknown authority"))
+		})
+
+		AfterEach(func() {
+			sealedVolumeName := getSealedVolumeName(tpmHash)
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
+			out, err := cmd.CombinedOutput()
+			Expect(err).ToNot(HaveOccurred(), out)
 		})
 	})
 })
@@ -372,19 +414,6 @@ func printInstallationOutput(message string, callerSkip ...int) {
 
 	// Ensures the correct line numbers are reported
 	Fail(message, callerSkip[0]+1)
-}
-
-func kubectlApplyYaml(yamlData string) {
-	yamlFile, err := os.CreateTemp("", "")
-	Expect(err).ToNot(HaveOccurred())
-	defer os.Remove(yamlFile.Name())
-
-	err = os.WriteFile(yamlFile.Name(), []byte(yamlData), 0744)
-	Expect(err).ToNot(HaveOccurred())
-
-	cmd := exec.Command("kubectl", "apply", "-f", yamlFile.Name())
-	out, err := cmd.CombinedOutput()
-	Expect(err).ToNot(HaveOccurred(), out)
 }
 
 func getChallengerServerCert() string {
@@ -408,6 +437,10 @@ func createConfigWithCert(server, cert string) client.Config {
 func createTPMPassphraseSecret(vm VM) string {
 	tpmHash, err := vm.Sudo("/system/discovery/kcrypt-discovery-challenger")
 	Expect(err).ToNot(HaveOccurred(), tpmHash)
+	tpmHash = strings.TrimSpace(tpmHash)
+
+	// Use safe Kubernetes name (TPM hash is 64 chars, exceeds 63 char limit)
+	sealedVolumeName := getSealedVolumeName(tpmHash)
 
 	kubectlApplyYaml(fmt.Sprintf(`---
 apiVersion: keyserver.kairos.io/v1alpha1
@@ -416,11 +449,11 @@ metadata:
   name: "%[1]s"
   namespace: default
 spec:
-  TPMHash: "%[1]s"
+  TPMHash: "%[2]s"
   partitions:
     - label: COS_PERSISTENT
   quarantined: false
-`, strings.TrimSpace(tpmHash)))
+`, sealedVolumeName, tpmHash))
 
 	return tpmHash
 }
