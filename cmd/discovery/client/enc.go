@@ -1,57 +1,10 @@
 package client
 
 import (
-	"encoding/json"
-	"fmt"
-	"strings"
-
 	"github.com/kairos-io/kairos-challenger/pkg/constants"
-	"github.com/kairos-io/kairos-challenger/pkg/payload"
-
-	"github.com/jaypipes/ghw/pkg/block"
 	"github.com/kairos-io/tpm-helpers"
 	"github.com/mudler/yip/pkg/utils"
-	"github.com/pkg/errors"
 )
-
-const DefaultNVIndex = "0x1500000"
-
-func getPass(server string, headers map[string]string, certificate string, partition *block.Partition) (string, bool, error) {
-	opts := []tpm.Option{
-		tpm.WithCAs([]byte(certificate)),
-		tpm.AppendCustomCAToSystemCA,
-		tpm.WithAdditionalHeader("label", partition.FilesystemLabel),
-		tpm.WithAdditionalHeader("name", partition.Name),
-		tpm.WithAdditionalHeader("uuid", partition.UUID),
-	}
-	for k, v := range headers {
-		opts = append(opts, tpm.WithAdditionalHeader(k, v))
-	}
-
-	msg, err := tpm.Get(server, opts...)
-	if err != nil {
-		return "", false, err
-	}
-	result := payload.Data{}
-	err = json.Unmarshal(msg, &result)
-	if err != nil {
-		return "", false, errors.Wrap(err, string(msg))
-	}
-
-	if result.HasPassphrase() {
-		return fmt.Sprint(result.Passphrase), result.HasBeenGenerated() && result.GeneratedBy == constants.TPMSecret, nil
-	} else if result.HasError() {
-		if strings.Contains(result.Error, "No secret found for") {
-			return "", false, errPartNotFound
-		}
-		if strings.Contains(result.Error, "x509: certificate signed by unknown authority") {
-			return "", false, errBadCertificate
-		}
-		return "", false, errors.New(result.Error)
-	}
-
-	return "", false, errPartNotFound
-}
 
 func genAndStore(k Config) (string, error) {
 	opts := []tpm.TPMOption{}
@@ -68,7 +21,7 @@ func genAndStore(k Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	nvindex := DefaultNVIndex
+	nvindex := constants.LocalPassphraseNVIndex
 	if k.Kcrypt.Challenger.NVIndex != "" {
 		nvindex = k.Kcrypt.Challenger.NVIndex
 	}
@@ -77,7 +30,7 @@ func genAndStore(k Config) (string, error) {
 }
 
 func localPass(k Config) (string, error) {
-	index := DefaultNVIndex
+	index := constants.LocalPassphraseNVIndex
 	if k.Kcrypt.Challenger.NVIndex != "" {
 		index = k.Kcrypt.Challenger.NVIndex
 	}
