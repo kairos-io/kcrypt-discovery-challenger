@@ -33,7 +33,7 @@ func NewClient() (*Client, error) {
 }
 
 func NewClientWithLogger(logger types.KairosLogger) (*Client, error) {
-	conf, err := unmarshalConfig()
+	conf, err := unmarshalConfig(logger)
 	if err != nil {
 		return nil, err
 	}
