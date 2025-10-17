@@ -2,7 +2,10 @@ VERSION 0.6
 
 # renovate: datasource=github-releases depName=kairos-io/kairos
 ARG KAIROS_VERSION="v3.5.3"
-ARG BASE_IMAGE=quay.io/kairos/ubuntu:24.04-core-amd64-generic-$KAIROS_VERSION
+ARG KAIROS_INIT_VERSION="v0.5.20"
+ARG UBUNTU_VERSION="24.04"
+# Use our custom base image instead of the upstream one
+ARG BASE_IMAGE=+custom-kairos-base
 
 ARG OSBUILDER_IMAGE=quay.io/kairos/osbuilder-tools
 # renovate: datasource=docker depName=golang
@@ -16,10 +19,54 @@ build-challenger:
     RUN CGO_ENABLED=1 go build -o kcrypt-discovery-challenger ./cmd/discovery
     SAVE ARTIFACT /work/kcrypt-discovery-challenger kcrypt-discovery-challenger AS LOCAL kcrypt-discovery-challenger
 
+kairos-init-binary:
+    ARG KAIROS_INIT_VERSION
+    FROM quay.io/kairos/kairos-init:${KAIROS_INIT_VERSION}
+    SAVE ARTIFACT /kairos-init kairos-init
+
+custom-kairos-base:
+    ARG UBUNTU_VERSION
+    ARG KAIROS_INIT_VERSION
+    FROM ubuntu:${UBUNTU_VERSION}
+
+    # Copy kairos-init from the kairos-init target
+    COPY +kairos-init-binary/kairos-init /kairos-init
+
+    # STAGE 1: Run kairos-init INSTALL stage only (installs packages, kernel, etc.)
+    # This will install the default immucore and kairos-agent from packages
+    RUN /kairos-init -l debug -m "generic" -t "false" -s "install" --version "${KAIROS_INIT_VERSION}"
+
+    # STAGE 1.5: Replace the installed binaries with our custom versions
+    # This happens AFTER package installation but BEFORE initramfs generation
+    COPY immucore /usr/bin/immucore
+    COPY kairos-agent /usr/bin/kairos-agent
+
+    # Verify our custom binaries are in place
+    RUN echo "Custom immucore version:" && /usr/bin/immucore --version && \
+        echo "Custom kairos-agent in place"
+
+    # STAGE 2: Run kairos-init INIT stage (generates initramfs with our custom binaries)
+    RUN /kairos-init -l debug -m "generic" -t "false" -s "init" --version "${KAIROS_INIT_VERSION}" && \
+        /kairos-init validate -t "false"
+
+    # Verify the initramfs was created
+    RUN ls -lh /boot/initrd && echo "Custom Kairos base image built successfully with custom binaries"
+
+    SAVE IMAGE custom-kairos-base:latest
+
 image:
-    FROM $BASE_IMAGE
+    FROM +custom-kairos-base
     ARG IMAGE
     COPY +build-challenger/kcrypt-discovery-challenger /system/discovery/kcrypt-discovery-challenger
+
+    # No need to copy binaries or regenerate initramfs - already done in custom-kairos-base!
+
+    # Verify our custom immucore is in place
+    RUN echo "Final immucore version in image:" && /usr/bin/immucore --version
+
+    # Add hardcoded root password for debugging
+    RUN echo 'root:root' | chpasswd
+
     SAVE IMAGE $IMAGE
 
 image-rootfs:
