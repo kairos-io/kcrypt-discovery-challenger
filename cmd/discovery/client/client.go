@@ -33,30 +33,38 @@ func NewClient() (*Client, error) {
 }
 
 func NewClientWithLogger(logger types.KairosLogger) (*Client, error) {
-	conf, err := unmarshalConfig(logger)
-	if err != nil {
-		return nil, err
-	}
-
+	// No config loading here - config is passed via the DiscoveryPasswordPayload JSON
+	conf := newEmptyConfig()
 	return &Client{Config: conf, Logger: logger}, nil
 }
 
 func (c *Client) Start(eventType pluggable.EventType) error {
 	factory := pluggable.NewPluginFactory()
 
-	// Input: bus.EventInstallPayload
-	// Expected output: map[string]string{}
 	factory.Add(bus.EventDiscoveryPassword, func(e *pluggable.Event) pluggable.EventResponse {
-		b := &block.Partition{}
-		err := json.Unmarshal([]byte(e.Data), b)
+		payload := &bus.DiscoveryPasswordPayload{}
+		err := json.Unmarshal([]byte(e.Data), payload)
 		if err != nil {
 			return pluggable.EventResponse{
-				Error: fmt.Sprintf("failed reading partitions: %s", err.Error()),
+				Error: fmt.Sprintf("failed reading payload: %s", err.Error()),
 			}
 		}
 
-		// Use the extracted core logic
-		pass, err := c.GetPassphrase(b, 30)
+		if payload.Partition == nil {
+			return pluggable.EventResponse{
+				Error: "partition is required in payload",
+			}
+		}
+
+		// Apply config from payload
+		c.Config.Kcrypt.Challenger.Server = payload.ChallengerServer
+		c.Config.Kcrypt.Challenger.MDNS = payload.MDNS
+		c.Config.Kcrypt.Challenger.Certificate = payload.Certificate
+		c.Config.Kcrypt.Challenger.NVIndex = payload.NVIndex
+		c.Config.Kcrypt.Challenger.CIndex = payload.CIndex
+		c.Config.Kcrypt.Challenger.TPMDevice = payload.TPMDevice
+
+		pass, err := c.GetPassphrase(payload.Partition, 30)
 		if err != nil {
 			return pluggable.EventResponse{
 				Error: fmt.Sprintf("failed getting pass: %s", err.Error()),
