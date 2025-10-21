@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/jaypipes/ghw/pkg/block"
@@ -62,6 +64,9 @@ Configuration:
   # Get passphrase for encrypted partition
   kcrypt-discovery-challenger get --partition-name=/dev/sda2
 
+  # Display TPM enrollment information (hash, PCRs, EK)
+  kcrypt-discovery-challenger info
+
   # Clean up TPM NV memory (useful for development)
   kcrypt-discovery-challenger cleanup
 
@@ -70,6 +75,39 @@ Configuration:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runTPMHash()
 	},
+}
+
+// newInfoCmd creates the info command
+func newInfoCmd() *cobra.Command {
+	var pcrs string
+
+	cmd := &cobra.Command{
+		Use:   "info",
+		Short: "Display TPM enrollment information",
+		Long: `Display TPM information used for remote KMS enrollment.
+
+This command shows the TPM hash, PCR values, and EK public key that are
+sent to the remote KMS during enrollment. This is useful for debugging
+and comparing client-side values with what's stored on the server.
+
+The --pcrs flag accepts a comma-separated list of PCR indices to display.
+If not specified, defaults to PCRs 0,7,11 (the standard set used for enrollment).`,
+		Example: `  # Display info with default PCRs (0,7,11)
+  kcrypt-discovery-challenger info
+
+  # Display info with specific PCRs
+  kcrypt-discovery-challenger info --pcrs=0,1,2,7
+
+  # Display info with all PCRs
+  kcrypt-discovery-challenger info --pcrs=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runInfo(pcrs)
+		},
+	}
+
+	cmd.Flags().StringVar(&pcrs, "pcrs", "0,7,11", "Comma-separated list of PCR indices to display")
+
+	return cmd
 }
 
 // newCleanupCmd creates the cleanup command
@@ -199,6 +237,7 @@ func init() {
 	// Add subcommands
 	rootCmd.AddCommand(newGetCmd())
 	rootCmd.AddCommand(newCleanupCmd())
+	rootCmd.AddCommand(newInfoCmd())
 	rootCmd.AddCommand(pluginCmd)
 }
 
@@ -471,6 +510,151 @@ func runCleanup(nvIndex, tpmDevice string, skipConfirmation bool) error {
 	fmt.Printf("Successfully cleaned up NV index %s\n", targetIndex)
 	logger.Debugf("Successfully undefined NV index %s", targetIndex)
 	return nil
+}
+
+// runInfo handles the info subcommand - display TPM enrollment information
+func runInfo(pcrsFlag string) error {
+	// Create logger based on debug flag
+	var logger types.KairosLogger
+	if debug {
+		logger = types.NewKairosLogger("kcrypt-discovery-challenger", "debug", false)
+		logger.Debugf("Debug mode enabled for info command")
+	} else {
+		logger = types.NewKairosLogger("kcrypt-discovery-challenger", "error", false)
+	}
+
+	// Parse PCR indices from comma-separated string
+	pcrIndices, err := parsePCRList(pcrsFlag)
+	if err != nil {
+		return fmt.Errorf("parsing PCR list: %w", err)
+	}
+	logger.Debugf("Displaying info for PCRs: %v", pcrIndices)
+
+	// Load configuration to get TPM device
+	config, err := client.NewClientWithLogger(logger)
+	if err != nil {
+		logger.Debugf("Warning: Could not load configuration: %v", err)
+		// Continue with defaults - not a fatal error
+	}
+
+	// Initialize AK Manager
+	logger.Debugf("Initializing AK Manager")
+	akManagerOpts := []tpm.Option{}
+	if config != nil && config.Config.Kcrypt.Challenger.TPMDevice != "" {
+		logger.Debugf("Using TPM device: %s", config.Config.Kcrypt.Challenger.TPMDevice)
+		akManagerOpts = append(akManagerOpts, tpm.WithTPMDevice(config.Config.Kcrypt.Challenger.TPMDevice))
+	}
+	akManager, err := tpm.NewAKManager(akManagerOpts...)
+	if err != nil {
+		return fmt.Errorf("creating AK manager: %w", err)
+	}
+	defer akManager.Close()
+	logger.Debugf("AK Manager initialized successfully")
+
+	// Get EK for attestation
+	logger.Debugf("Getting EK for attestation")
+	ek, err := akManager.GetEK()
+	if err != nil {
+		return fmt.Errorf("getting EK: %w", err)
+	}
+
+	// Compute TPM hash from EK
+	logger.Debugf("Computing TPM hash from EK")
+	tpmHash, err := attpkg.ComputeTPMHashFromEK(ek)
+	if err != nil {
+		return fmt.Errorf("computing TPM hash: %w", err)
+	}
+
+	// Get EK public key in PEM format
+	logger.Debugf("Encoding EK to PEM")
+	ekPEM, err := attpkg.EncodeEKToPEM(ek)
+	if err != nil {
+		return fmt.Errorf("encoding EK to PEM: %w", err)
+	}
+
+	// Read PCR values
+	logger.Debugf("Reading PCR values")
+	pcrQuote, err := akManager.GeneratePCRQuote(pcrIndices)
+	if err != nil {
+		return fmt.Errorf("reading PCR values: %w", err)
+	}
+
+	// Parse the PCR quote to extract PCR values
+	var quoteData struct {
+		Quote struct {
+			Version   string `json:"version"`
+			Quote     []byte `json:"quote"`
+			Signature []byte `json:"signature"`
+		} `json:"quote"`
+		PCRs map[int][]byte `json:"pcrs"`
+	}
+	if err := json.Unmarshal(pcrQuote, &quoteData); err != nil {
+		return fmt.Errorf("parsing PCR quote: %w", err)
+	}
+
+	// Display the information
+	fmt.Printf("TPM Enrollment Information\n")
+	fmt.Printf("==========================\n\n")
+	
+	fmt.Printf("TPM Hash:\n")
+	fmt.Printf("  %s\n\n", tpmHash)
+
+	fmt.Printf("PCR Values:\n")
+	for _, idx := range pcrIndices {
+		if pcrValue, exists := quoteData.PCRs[idx]; exists {
+			fmt.Printf("  PCR %2d: %x\n", idx, pcrValue)
+		} else {
+			fmt.Printf("  PCR %2d: <not available>\n", idx)
+		}
+	}
+	fmt.Printf("\n")
+
+	fmt.Printf("EK Public Key (PEM):\n")
+	fmt.Printf("%s\n", ekPEM)
+
+	return nil
+}
+
+// parsePCRList parses a comma-separated string of PCR indices
+// Returns a unique, sorted list of PCR indices
+func parsePCRList(pcrsStr string) ([]int, error) {
+	if pcrsStr == "" {
+		return nil, fmt.Errorf("PCR list cannot be empty")
+	}
+
+	parts := strings.Split(pcrsStr, ",")
+	pcrSet := make(map[int]bool) // Use map to ensure uniqueness
+	
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		
+		var pcrIndex int
+		if _, err := fmt.Sscanf(part, "%d", &pcrIndex); err != nil {
+			return nil, fmt.Errorf("invalid PCR index '%s': %w", part, err)
+		}
+		
+		if pcrIndex < 0 || pcrIndex > 23 {
+			return nil, fmt.Errorf("PCR index %d is out of range (0-23)", pcrIndex)
+		}
+		
+		pcrSet[pcrIndex] = true
+	}
+	
+	if len(pcrSet) == 0 {
+		return nil, fmt.Errorf("no valid PCR indices found")
+	}
+	
+	// Convert map to sorted slice
+	pcrIndices := make([]int, 0, len(pcrSet))
+	for pcrIndex := range pcrSet {
+		pcrIndices = append(pcrIndices, pcrIndex)
+	}
+	sort.Ints(pcrIndices)
+	
+	return pcrIndices, nil
 }
 
 // maskSensitiveString masks certificate paths/content for logging
