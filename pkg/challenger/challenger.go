@@ -709,25 +709,25 @@ func errorMessage(conn *websocket.Conn, logger logr.Logger, theErr error, descri
 	}
 	logger.Error(theErr, description)
 
-	sendErrorResponse(conn, logger)
+	sendErrorResponse(conn, logger, fmt.Sprintf("%s: %v", description, theErr))
 }
 
 // securityRejection should be used for security-related rejections (PCR mismatches, quarantine, etc.)
 // These are logged as INFO since they're expected security behavior, not application errors
 func securityRejection(conn *websocket.Conn, logger logr.Logger, reason string, details string) {
 	logger.Info("Security verification failed - rejecting attestation", "reason", reason, "details", details)
-	sendErrorResponse(conn, logger)
+	sendErrorResponse(conn, logger, fmt.Sprintf("%s: %s", reason, details))
 }
 
-// sendErrorResponse sends an error response to the client and closes the connection
-func sendErrorResponse(conn *websocket.Conn, logger logr.Logger) {
-	// Send error as ProofResponse to maintain protocol consistency
-	// Empty passphrase with error message embedded
-	errorResp := tpm.ProofResponse{
-		Passphrase: []byte{}, // Empty passphrase indicates error
+// sendErrorResponse sends an error response to the client with the error message
+func sendErrorResponse(conn *websocket.Conn, logger logr.Logger, errorMsg string) {
+	// Send error response as JSON so client can log the specific error
+	response := attestation.AttestationResponse{
+		Error: errorMsg,
 	}
 
-	if err := conn.WriteJSON(errorResp); err != nil {
+	// Send as JSON using WriteJSON helper (sends as text message)
+	if err := conn.WriteJSON(response); err != nil {
 		logger.Error(err, "Failed to send error response to client")
 	}
 
@@ -761,32 +761,31 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 	// 3. Perform attestation flow
 	// Protocol Step 1: Receive attestation init from client
 	logger.Info("Waiting for attestation init from client")
-	_, initBytes, err := conn.ReadMessage()
-	if err != nil {
+	var init attestation.AttestationInit
+	if err := conn.ReadJSON(&init); err != nil {
 		errorMessage(conn, logger, fmt.Errorf("reading attestation init: %w", err), "WebSocket read")
 		return
 	}
 	logger.Info("Received attestation init from client")
 
-	// Protocol Step 2: Generate challenge
+	// Protocol Step 2: Generate and send challenge
 	logger.Info("Generating attestation challenge")
-	challengeBytes, secret, err := attestationServer.GenerateChallenge(initBytes)
+	challenge, secret, err := attestationServer.GenerateChallenge(&init)
 	if err != nil {
 		errorMessage(conn, logger, fmt.Errorf("generating challenge: %w", err), "Challenge generation")
 		return
 	}
 
-	// Send challenge to client
 	logger.Info("Sending challenge to client")
-	if err := conn.WriteMessage(websocket.BinaryMessage, challengeBytes); err != nil {
+	if err := conn.WriteJSON(challenge); err != nil {
 		errorMessage(conn, logger, fmt.Errorf("sending challenge: %w", err), "Challenge send")
 		return
 	}
 
 	// Protocol Step 3: Receive proof from client
 	logger.Info("Waiting for proof from client")
-	_, proofBytes, err := conn.ReadMessage()
-	if err != nil {
+	var proof attestation.AttestationProof
+	if err := conn.ReadJSON(&proof); err != nil {
 		errorMessage(conn, logger, fmt.Errorf("reading proof: %w", err), "Proof read")
 		return
 	}
@@ -794,7 +793,7 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 
 	// Protocol Step 4: Verify proof and issue passphrase
 	logger.Info("Verifying proof and issuing passphrase")
-	passphrase, err := attestationServer.IssuePassphrase(context.Background(), initBytes, proofBytes, secret)
+	passphrase, err := attestationServer.IssuePassphrase(context.Background(), &init, &proof, secret)
 	if err != nil {
 		securityRejection(conn, logger, "Attestation verification failed", err.Error())
 		return
@@ -802,7 +801,12 @@ func handleTPMAttestation(w http.ResponseWriter, r *http.Request, logger logr.Lo
 
 	// Protocol Step 5: Send passphrase to client
 	logger.Info("Sending passphrase to client")
-	if err := conn.WriteMessage(websocket.BinaryMessage, passphrase); err != nil {
+	response := attestation.AttestationResponse{
+		Passphrase: passphrase,
+	}
+
+	// Send as JSON using WriteJSON helper (sends as text message)
+	if err := conn.WriteJSON(response); err != nil {
 		errorMessage(conn, logger, fmt.Errorf("sending passphrase: %w", err), "Passphrase send")
 		return
 	}

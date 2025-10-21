@@ -23,8 +23,8 @@ func (c *RemoteAttestationClient) Close() error {
 	return c.akm.Close()
 }
 
-// CreateInit gathers EK and creates a transient AK, returning AttestationInit bytes
-func (c *RemoteAttestationClient) CreateInit() ([]byte, error) {
+// CreateInit gathers EK and creates a transient AK, returning AttestationInit
+func (c *RemoteAttestationClient) CreateInit() (*AttestationInit, error) {
 	// Get attestation params of cached AK
 	params, err := c.akm.AKParams()
 	if err != nil {
@@ -48,30 +48,19 @@ func (c *RemoteAttestationClient) CreateInit() ([]byte, error) {
 		return nil, err
 	}
 
-	init := AttestationInit{
+	return &AttestationInit{
 		EKPublic: ekSPKI,
 		AKParams: akParamsBytes,
-	}
-	return json.Marshal(init)
+	}, nil
 }
 
-// HandleChallenge takes an AttestationChallenge (bytes), activates credential, and returns AttestationProof bytes
+// HandleChallenge takes an AttestationChallenge, activates credential, and returns AttestationProof
 // The client selects PCRs.
-func (c *RemoteAttestationClient) HandleChallenge(challengeBytes []byte, pcrs []int) ([]byte, error) {
-	var ch AttestationChallenge
-	if err := json.Unmarshal(challengeBytes, &ch); err != nil {
-		return nil, err
-	}
-
-	var ec struct{}
-	if err := json.Unmarshal(ch.EncryptedCredential, &ec); err != nil {
-		return nil, err
-	}
-
+func (c *RemoteAttestationClient) HandleChallenge(challenge *AttestationChallenge, pcrs []int) (*AttestationProof, error) {
 	// Activate credential to get secret
 	// Unmarshal EncryptedCredential into the right type
 	var enc attest.EncryptedCredential
-	if err := json.Unmarshal(ch.EncryptedCredential, &enc); err != nil {
+	if err := json.Unmarshal(challenge.EncryptedCredential, &enc); err != nil {
 		return nil, err
 	}
 	secret, err := c.akm.ActivateCredential(&enc)
@@ -85,6 +74,8 @@ func (c *RemoteAttestationClient) HandleChallenge(challengeBytes []byte, pcrs []
 		return nil, err
 	}
 
-	proof := AttestationProof{Secret: secret, PCRQuote: pcrQuote}
-	return json.Marshal(proof)
+	return &AttestationProof{
+		Secret:   secret,
+		PCRQuote: pcrQuote,
+	}, nil
 }

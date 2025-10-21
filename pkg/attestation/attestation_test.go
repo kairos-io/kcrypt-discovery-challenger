@@ -24,46 +24,58 @@ var _ = Describe("Remote attestation end-to-end", func() {
 		Expect(err).ToNot(HaveOccurred())
 		defer client.Close() //nolint:errcheck
 
-		initBytes, err := client.CreateInit()
+		init, err := client.CreateInit()
 		Expect(err).ToNot(HaveOccurred())
-		Expect(initBytes).ToNot(BeEmpty())
+		Expect(init).ToNot(BeNil())
+		Expect(init.EKPublic).ToNot(BeEmpty())
+		Expect(init.AKParams).ToNot(BeEmpty())
 
 		// Server: parse init and generate challenge
 		server := NewRemoteAttestationServer(&dummyAttestator{})
-		challengeBytes, expectedSecret, err := server.GenerateChallenge(initBytes)
+		challenge, expectedSecret, err := server.GenerateChallenge(init)
 		Expect(err).ToNot(HaveOccurred())
-		Expect(challengeBytes).ToNot(BeEmpty())
+		Expect(challenge).ToNot(BeNil())
+		Expect(challenge.EncryptedCredential).ToNot(BeEmpty())
 		Expect(expectedSecret).ToNot(BeEmpty())
 
 		// Client: handle challenge with chosen PCRs
-		proofBytes, err := client.HandleChallenge(challengeBytes, []int{0, 7, 11})
+		proof, err := client.HandleChallenge(challenge, []int{0, 7, 11})
 		Expect(err).ToNot(HaveOccurred())
-		Expect(proofBytes).ToNot(BeEmpty())
+		Expect(proof).ToNot(BeNil())
+		Expect(proof.Secret).ToNot(BeEmpty())
+		Expect(proof.PCRQuote).ToNot(BeEmpty())
 
 		// Server: verify proof and issue passphrase
-		vr, err := server.VerifyProof(initBytes, proofBytes, expectedSecret)
+		vr, err := server.VerifyProof(init, proof, expectedSecret)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(vr.PCRs).ToNot(BeNil())
 
 		// Issue passphrase via attestator
-		pass, err := server.IssuePassphrase(context.Background(), initBytes, proofBytes, expectedSecret)
+		pass, err := server.IssuePassphrase(context.Background(), init, proof, expectedSecret)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(pass).To(Equal([]byte("passphrase")))
 	})
 
 	It("methods validate input formats", func() {
-		// malformed init
+		// malformed init (invalid EK public key)
 		server := NewRemoteAttestationServer(&dummyAttestator{})
-		_, _, err := server.GenerateChallenge([]byte("not-json"))
-		Expect(err).To(HaveOccurred())
+		malformedInit := &AttestationInit{
+			EKPublic: []byte("not-valid-spki"),
+			AKParams: []byte("{}"),
+		}
+		_, _, err := server.GenerateChallenge(malformedInit)
+		Expect(err).To(MatchError(ContainSubstring("parse EK SPKI")))
 
 		// client handle malformed challenge
 		client, err := NewRemoteAttestationClient(tpmhelpers.Emulated, tpmhelpers.EmulatedHostSeed())
 		Expect(err).ToNot(HaveOccurred())
 		defer client.Close() //nolint:errcheck
 
-		_, err = client.HandleChallenge([]byte("not-json"), []int{0})
-		Expect(err).To(HaveOccurred())
+		malformedChallenge := &AttestationChallenge{
+			EncryptedCredential: []byte("not-json"),
+		}
+		_, err = client.HandleChallenge(malformedChallenge, []int{0})
+		Expect(err).To(MatchError(ContainSubstring("invalid character")))
 	})
 
 	It("server parse init decodes AK params", func() {
@@ -71,10 +83,10 @@ var _ = Describe("Remote attestation end-to-end", func() {
 		Expect(err).ToNot(HaveOccurred())
 		defer client.Close() //nolint:errcheck
 
-		initBytes, err := client.CreateInit()
+		init, err := client.CreateInit()
 		Expect(err).ToNot(HaveOccurred())
 
-		ek, akParams, err := NewRemoteAttestationServer(&dummyAttestator{}).ParseInit(initBytes)
+		ek, akParams, err := NewRemoteAttestationServer(&dummyAttestator{}).ParseInit(init)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(ek).ToNot(BeNil())
 		Expect(akParams).ToNot(BeNil())

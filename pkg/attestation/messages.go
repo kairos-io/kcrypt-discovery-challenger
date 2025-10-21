@@ -25,6 +25,14 @@ type AttestationProof struct {
 	PCRQuote json.RawMessage `json:"pcr_quote"`
 }
 
+// AttestationResponse is the final response from the server after verifying the proof.
+// It contains either the passphrase (on success) or an error message (on failure).
+// If Error is non-empty, the attestation failed and Passphrase should be ignored.
+type AttestationResponse struct {
+	Passphrase []byte `json:"passphrase,omitempty"` // The decryption passphrase (on success)
+	Error      string `json:"error,omitempty"`      // Error message (on failure)
+}
+
 // EncodePublicKeyToSPKI returns DER-encoded SubjectPublicKeyInfo for a public key
 func EncodePublicKeyToSPKI(pub interface{}) ([]byte, error) {
 	return x509.MarshalPKIXPublicKey(pub)

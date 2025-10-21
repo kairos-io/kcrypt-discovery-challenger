@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	process "github.com/mudler/go-processmanager"
@@ -27,7 +29,17 @@ var globalVM *VM
 
 func TestE2e(t *testing.T) {
 	RegisterFailHandler(printChallengerLogsOnFailure)
+	//RegisterFailHandler(Fail)
+	//RegisterFailHandler(waitFail)
 	RunSpecs(t, "kcrypt-challenger e2e test Suite")
+}
+
+func waitFail(message string, callerSkip ...int) {
+	fmt.Println(message)
+	fmt.Println("failed, will sleep now")
+	time.Sleep(30 * time.Minute)
+
+	Fail(message, callerSkip[0]+1)
 }
 
 type VMOptions struct {
@@ -245,6 +257,7 @@ func getFreePort() (port int, err error) {
 
 // Helper to install Kairos with given config
 func installKairosWithConfig(vm VM, config string) {
+	GinkgoHelper()
 	configFile, err := os.CreateTemp("", "")
 	Expect(err).ToNot(HaveOccurred())
 	defer os.Remove(configFile.Name())
@@ -262,6 +275,7 @@ func installKairosWithConfig(vm VM, config string) {
 
 // Helper to reboot and wait for connection
 func rebootAndConnect(vm VM) {
+	GinkgoHelper()
 	By("Rebooting VM")
 	vm.Reboot()
 	By("Waiting for VM to be connectable")
@@ -270,6 +284,7 @@ func rebootAndConnect(vm VM) {
 
 // Helper to verify encrypted partition exists
 func verifyEncryptedPartition(vm VM) {
+	GinkgoHelper()
 	By("Verifying encrypted partition exists")
 	out, err := vm.Sudo("blkid")
 	Expect(err).ToNot(HaveOccurred(), out)
@@ -279,49 +294,61 @@ func verifyEncryptedPartition(vm VM) {
 
 // Helper to get TPM hash from VM
 func getTPMHash(vm VM) string {
+	GinkgoHelper()
 	By("Getting TPM hash from VM")
 	hash, err := vm.Sudo("/system/discovery/kcrypt-discovery-challenger")
 	Expect(err).ToNot(HaveOccurred(), hash)
 	return strings.TrimSpace(hash)
 }
 
-// Helper to test passphrase retrieval via CLI (returns true if successful, false if failed)
-func checkPassphraseRetrieval(vm VM, partitionLabel string) bool {
+// Helper to test passphrase retrieval via CLI (returns passphrase and error)
+func checkPassphraseRetrieval(vm VM, partitionLabel string) (string, error) {
+	GinkgoHelper()
 	By(fmt.Sprintf("Testing passphrase retrieval for partition %s via CLI", partitionLabel))
 
 	// Configure the CLI to use the challenger server
+	// Capture both stdout and stderr by redirecting stderr to stdout
 	cliCmd := fmt.Sprintf(`/system/discovery/kcrypt-discovery-challenger get \
 	  --partition-label=%s \
 	  --challenger-server="http://%s" \
-	  2>/dev/null`, partitionLabel, os.Getenv("KMS_ADDRESS"))
+	  2>&1`, partitionLabel, os.Getenv("KMS_ADDRESS"))
 
 	out, err := vm.Sudo(cliCmd)
 	if err != nil {
-		By(fmt.Sprintf("Passphrase retrieval failed: %v", err))
-		return false
+		By(fmt.Sprintf("Passphrase retrieval failed: %v, output: %s", err, out))
+		return "", fmt.Errorf("%v: %s", err, out)
 	}
 
 	// Check if we got a passphrase (non-empty output)
 	passphrase := strings.TrimSpace(out)
-	success := len(passphrase) > 0
-
-	if success {
+	if len(passphrase) > 0 {
 		By("Passphrase retrieval successful")
-	} else {
-		By("Passphrase retrieval failed - empty response")
+		return passphrase, nil
 	}
 
-	return success
+	By("Passphrase retrieval failed - empty response")
+	return "", fmt.Errorf("empty passphrase response")
 }
 
 // Helper to test passphrase retrieval with expectation (for cleaner test logic)
 func expectPassphraseRetrieval(vm VM, partitionLabel string, shouldSucceed bool) {
-	success := checkPassphraseRetrieval(vm, partitionLabel)
+	GinkgoHelper()
+	passphrase, err := checkPassphraseRetrieval(vm, partitionLabel)
 	if shouldSucceed {
-		Expect(success).To(BeTrue(), "Passphrase retrieval should have succeeded")
+		Expect(err).ToNot(HaveOccurred(), "Passphrase retrieval should have succeeded")
+		Expect(passphrase).ToNot(BeEmpty(), "Passphrase should not be empty")
 	} else {
-		Expect(success).To(BeFalse(), "Passphrase retrieval should have failed")
+		Expect(err).To(HaveOccurred(), "Passphrase retrieval should have failed")
 	}
+}
+
+// Helper to test passphrase retrieval with expected error message
+func expectPassphraseRetrievalWithError(vm VM, partitionLabel string, expectedError string) {
+	GinkgoHelper()
+	passphrase, err := checkPassphraseRetrieval(vm, partitionLabel)
+	Expect(err).To(MatchError(ContainSubstring(expectedError)),
+		"Expected passphrase retrieval to fail with error containing '%s', but got passphrase: %s",
+		expectedError, passphrase)
 }
 
 // Helper to get the correct SealedVolume name from TPM hash
@@ -368,16 +395,30 @@ spec:
 
 // Helper to update SealedVolume attestation configuration
 func updateSealedVolumeAttestation(tpmHashParam string, field, value string) {
+	GinkgoHelper()
 	sealedVolumeName := getSealedVolumeName(tpmHashParam)
-	By(fmt.Sprintf("Updating SealedVolume %s field %s to %s", sealedVolumeName, field, value))
-	patch := fmt.Sprintf(`{"spec":{"attestation":{"%s":"%s"}}}`, field, value)
+	By(fmt.Sprintf("Updating SealedVolume %s field %s (value length: %d)", sealedVolumeName, field, len(value)))
+
+	// Properly escape the value for JSON
+	valueJSON, err := json.Marshal(value)
+	Expect(err).ToNot(HaveOccurred(), "Failed to marshal value to JSON")
+
+	var patch string
+	// Handle nested PCR fields specially
+	if pcrIndex, hasPrefix := strings.CutPrefix(field, "pcrValues.pcrs."); hasPrefix {
+		patch = fmt.Sprintf(`{"spec":{"attestation":{"pcrValues":{"pcrs":{"%s":%s}}}}}`, pcrIndex, valueJSON)
+	} else {
+		patch = fmt.Sprintf(`{"spec":{"attestation":{"%s":%s}}}`, field, valueJSON)
+	}
+
 	cmd := exec.Command("kubectl", "patch", "sealedvolume", sealedVolumeName, "--type=merge", "-p", patch)
 	out, err := cmd.CombinedOutput()
-	Expect(err).ToNot(HaveOccurred(), string(out))
+	Expect(err).ToNot(HaveOccurred(), "kubectl patch failed: %s", string(out))
 }
 
 // Helper to quarantine TPM
 func quarantineTPM(tpmHash string) {
+	GinkgoHelper()
 	sealedVolumeName := getSealedVolumeName(tpmHash)
 	By(fmt.Sprintf("Quarantining TPM %s", sealedVolumeName))
 	patch := `{"spec":{"quarantined":true}}`
@@ -388,6 +429,7 @@ func quarantineTPM(tpmHash string) {
 
 // Helper to unquarantine TPM
 func unquarantineTPM(tpmHashParam string) {
+	GinkgoHelper()
 	sealedVolumeName := getSealedVolumeName(tpmHashParam)
 	By(fmt.Sprintf("Unquarantining TPM %s", sealedVolumeName))
 	patch := `{"spec":{"quarantined":false}}`
@@ -398,18 +440,10 @@ func unquarantineTPM(tpmHashParam string) {
 
 // Helper to delete SealedVolume
 func deleteSealedVolume(tpmHashParam string) {
+	GinkgoHelper()
 	sealedVolumeName := getSealedVolumeName(tpmHashParam)
 	By(fmt.Sprintf("Deleting SealedVolume %s", sealedVolumeName))
 	cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName, "--ignore-not-found=true")
-	out, err := cmd.CombinedOutput()
-	Expect(err).ToNot(HaveOccurred(), string(out))
-}
-
-// Helper to delete SealedVolume from all namespaces
-func deleteSealedVolumeAllNamespaces(tpmHashParam string) {
-	sealedVolumeName := getSealedVolumeName(tpmHashParam)
-	By(fmt.Sprintf("Deleting SealedVolume %s from all namespaces", sealedVolumeName))
-	cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName, "--ignore-not-found=true", "--all-namespaces")
 	out, err := cmd.CombinedOutput()
 	Expect(err).ToNot(HaveOccurred(), string(out))
 }
@@ -496,7 +530,7 @@ spec:
 // Helper to cleanup test resources
 func cleanupTestResources(tpmHash string) {
 	if tpmHash != "" {
-		deleteSealedVolumeAllNamespaces(tpmHash)
+		deleteSealedVolume(tpmHash)
 
 		// Cleanup associated secrets using labels
 		// This will delete all secrets created by kcrypt-challenger for this TPM hash
@@ -517,6 +551,7 @@ func deleteTestNamespaces(namespaces ...string) {
 
 // Helper to install Kairos with config (handles both success and failure cases)
 func installKairosWithConfigAdvanced(vm VM, config string, expectSuccess bool) {
+	GinkgoHelper()
 	configFile, err := os.CreateTemp("", "")
 	Expect(err).ToNot(HaveOccurred())
 	defer os.Remove(configFile.Name())
@@ -539,6 +574,7 @@ func installKairosWithConfigAdvanced(vm VM, config string, expectSuccess bool) {
 
 // Helper to cleanup VM and TPM emulator
 func cleanupVM(vm VM) {
+	GinkgoHelper()
 	By("Cleaning up test VM")
 	err := vm.Destroy(func(vm VM) {
 		// Stop TPM emulator
