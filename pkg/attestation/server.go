@@ -41,11 +41,7 @@ func NewRemoteAttestationServer(attestator Attestator) *RemoteAttestationServer 
 	return &RemoteAttestationServer{attestator: attestator}
 }
 
-func (s *RemoteAttestationServer) ParseInit(initBytes []byte) (*attest.EK, *attest.AttestationParameters, error) {
-	var init AttestationInit
-	if err := json.Unmarshal(initBytes, &init); err != nil {
-		return nil, nil, err
-	}
+func (s *RemoteAttestationServer) ParseInit(init *AttestationInit) (*attest.EK, *attest.AttestationParameters, error) {
 	// Decode EK public from SPKI DER
 	ekPub, err := x509.ParsePKIXPublicKey(init.EKPublic)
 	if err != nil {
@@ -60,8 +56,8 @@ func (s *RemoteAttestationServer) ParseInit(initBytes []byte) (*attest.EK, *atte
 	return ek, &params, nil
 }
 
-func (s *RemoteAttestationServer) GenerateChallenge(initBytes []byte) ([]byte, []byte, error) {
-	ek, akParams, err := s.ParseInit(initBytes)
+func (s *RemoteAttestationServer) GenerateChallenge(init *AttestationInit) (*AttestationChallenge, []byte, error) {
+	ek, akParams, err := s.ParseInit(init)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -74,25 +70,16 @@ func (s *RemoteAttestationServer) GenerateChallenge(initBytes []byte) ([]byte, [
 	if err != nil {
 		return nil, nil, err
 	}
-	ch := AttestationChallenge{EncryptedCredential: chBytes}
-	out, err := json.Marshal(ch)
-	if err != nil {
-		return nil, nil, err
-	}
-	return out, secret, nil
+	return &AttestationChallenge{EncryptedCredential: chBytes}, secret, nil
 }
 
-func (s *RemoteAttestationServer) VerifyProof(initBytes, proofBytes, expectedSecret []byte) (VerificationResult, error) {
-	var proof AttestationProof
-	if err := json.Unmarshal(proofBytes, &proof); err != nil {
-		return VerificationResult{}, err
-	}
+func (s *RemoteAttestationServer) VerifyProof(init *AttestationInit, proof *AttestationProof, expectedSecret []byte) (VerificationResult, error) {
 	if !equalBytes(expectedSecret, proof.Secret) {
 		return VerificationResult{}, fmt.Errorf("invalid secret")
 	}
 
 	// Get AK public from init's AK params
-	_, akParams, err := s.ParseInit(initBytes)
+	_, akParams, err := s.ParseInit(init)
 	if err != nil {
 		return VerificationResult{}, err
 	}
@@ -124,13 +111,13 @@ func (s *RemoteAttestationServer) VerifyProof(initBytes, proofBytes, expectedSec
 	return VerificationResult{AKPublic: akPub, PCRs: verifiedPCRs}, nil
 }
 
-func (s *RemoteAttestationServer) IssuePassphrase(ctx context.Context, initBytes, proofBytes, expectedSecret []byte) ([]byte, error) {
-	vr, err := s.VerifyProof(initBytes, proofBytes, expectedSecret)
+func (s *RemoteAttestationServer) IssuePassphrase(ctx context.Context, init *AttestationInit, proof *AttestationProof, expectedSecret []byte) ([]byte, error) {
+	vr, err := s.VerifyProof(init, proof, expectedSecret)
 	if err != nil {
 		return nil, err
 	}
 	// Derive TPM hash from EK again for input to Attestator
-	ek, _, err := s.ParseInit(initBytes)
+	ek, _, err := s.ParseInit(init)
 	if err != nil {
 		return nil, err
 	}

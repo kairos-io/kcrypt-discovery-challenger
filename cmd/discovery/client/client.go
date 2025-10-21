@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/go-attestation/attest"
@@ -127,6 +128,7 @@ func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders 
 		}
 	}()
 
+	var lastErr error
 	for tries := 0; tries < attempts; tries++ {
 		c.Logger.Debugf("Debug: TPM attestation attempt %d/%d", tries+1, attempts)
 
@@ -135,6 +137,15 @@ func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders 
 		passphrase, err := c.performTPMAttestation(attestationEndpoint, additionalHeaders, attestationClient, p)
 		if err != nil {
 			c.Logger.Debugf("Failed TPM attestation: %v", err)
+			lastErr = err
+
+			// Don't retry on attestation failures (security rejections like quarantine, PCR mismatch, etc.)
+			// These are permanent failures, not transient network issues
+			if strings.Contains(err.Error(), "attestation failed") {
+				c.Logger.Debugf("Attestation failure detected, not retrying")
+				return "", err
+			}
+
 			time.Sleep(NetworkRetryDelay)
 			continue
 		}
@@ -142,6 +153,9 @@ func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders 
 		return passphrase, nil
 	}
 
+	if lastErr != nil {
+		return "", fmt.Errorf("exhausted all attempts (%d) for TPM attestation, last error: %w", attempts, lastErr)
+	}
 	return "", fmt.Errorf("exhausted all attempts (%d) for TPM attestation", attempts)
 }
 
@@ -208,34 +222,31 @@ func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[st
 
 	defer conn.Close() //nolint:errcheck
 
-	// Protocol Step 1: Create attestation init
+	// Protocol Step 1: Create and send attestation init
 	c.Logger.Debugf("Debug: Creating attestation init")
-	initBytes, err := attestationClient.CreateInit()
+	init, err := attestationClient.CreateInit()
 	if err != nil {
 		return "", fmt.Errorf("creating attestation init: %w", err)
 	}
-	c.Logger.Debugf("Debug: Attestation init created successfully")
-
-	// Send attestation init to server
 	c.Logger.Debugf("Debug: Sending attestation init to server")
-	if err := conn.WriteMessage(websocket.BinaryMessage, initBytes); err != nil {
+	if err := conn.WriteJSON(init); err != nil {
 		return "", fmt.Errorf("sending attestation init: %w", err)
 	}
 	c.Logger.Debugf("Debug: Attestation init sent successfully")
 
-	// Protocol Step 2: Wait for challenge response from server
+	// Protocol Step 2: Receive challenge from server
 	c.Logger.Debugf("Debug: Waiting for challenge from server")
-	_, challengeBytes, err := conn.ReadMessage()
-	if err != nil {
+	var challenge attestation.AttestationChallenge
+	if err := conn.ReadJSON(&challenge); err != nil {
 		return "", fmt.Errorf("reading challenge from server: %w", err)
 	}
 	c.Logger.Debugf("Challenge received")
 
-	// Protocol Step 3: Handle challenge
+	// Protocol Step 3: Handle challenge and create proof
 	c.Logger.Debugf("Debug: Handling challenge")
 	// Use default PCRs for now - this could be made configurable
 	pcrs := []int{0, 7, 11} // Common PCRs used in the system
-	proofBytes, err := attestationClient.HandleChallenge(challengeBytes, pcrs)
+	proof, err := attestationClient.HandleChallenge(&challenge, pcrs)
 	if err != nil {
 		c.Logger.Debugf("Debug: HandleChallenge failed: %v", err)
 		return "", fmt.Errorf("handling challenge: %w", err)
@@ -244,25 +255,32 @@ func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[st
 
 	// Protocol Step 4: Send proof to server
 	c.Logger.Debugf("Debug: Sending proof to server")
-	if err := conn.WriteMessage(websocket.BinaryMessage, proofBytes); err != nil {
+	if err := conn.WriteJSON(proof); err != nil {
 		return "", fmt.Errorf("sending proof: %w", err)
 	}
 	c.Logger.Debugf("Proof sent")
 
-	// Protocol Step 5: Receive passphrase from server
+	// Protocol Step 5: Receive passphrase response from server
 	c.Logger.Debugf("Debug: Waiting for passphrase response")
-	_, passphraseBytes, err := conn.ReadMessage()
-	if err != nil {
+	var response attestation.AttestationResponse
+	if err := conn.ReadJSON(&response); err != nil {
 		return "", fmt.Errorf("reading passphrase response: %w", err)
 	}
-	c.Logger.Debugf("Passphrase received - Length: %d bytes", len(passphraseBytes))
+	c.Logger.Debugf("Response received")
 
-	// Check if we received an empty passphrase (indicates server error)
-	if len(passphraseBytes) == 0 {
-		return "", fmt.Errorf("server returned empty passphrase, indicating an error occurred during attestation")
+	// Check if the server returned an error
+	if response.Error != "" {
+		c.Logger.Debugf("Server returned error: %s", response.Error)
+		return "", fmt.Errorf("attestation failed: %s", response.Error)
 	}
 
-	return string(passphraseBytes), nil
+	// Check if we received an empty passphrase (shouldn't happen if no error, but defensive check)
+	if len(response.Passphrase) == 0 {
+		return "", fmt.Errorf("server returned empty passphrase without error message")
+	}
+
+	c.Logger.Debugf("Passphrase received successfully")
+	return string(response.Passphrase), nil
 }
 
 // decryptPassphrase decodes (base64) and decrypts the passphrase returned

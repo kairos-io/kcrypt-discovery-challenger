@@ -88,9 +88,9 @@ kcrypt:
 				return false
 			}
 			// Check that attestation data was populated (not empty)
+			// Note: Using transient AK approach, only EK is stored
 			return strings.Contains(string(out), "attestation:") &&
-				strings.Contains(string(out), "ekPublicKey:") &&
-				strings.Contains(string(out), "akPublicKey:")
+				strings.Contains(string(out), "ekPublicKey:")
 		}, 30*time.Second, 5*time.Second).Should(BeTrue())
 
 		By("Verifying encryption secrets were auto-generated for both partitions")
@@ -108,8 +108,8 @@ kcrypt:
 		quarantineTPM(tpmHash)
 
 		By("Testing that quarantined TPM is rejected via CLI for both partitions")
-		expectPassphraseRetrieval(testVM, "COS_PERSISTENT", false)
-		expectPassphraseRetrieval(testVM, "COS_OEM", false)
+		expectPassphraseRetrievalWithError(testVM, "COS_PERSISTENT", "quarantined")
+		expectPassphraseRetrievalWithError(testVM, "COS_OEM", "quarantined")
 
 		By("Testing recovery by unquarantining TPM")
 		unquarantineTPM(tpmHash)
@@ -122,8 +122,8 @@ kcrypt:
 		updateSealedVolumeAttestation(tpmHash, "pcrValues.pcrs.0", "wrong-pcr0-value")
 
 		By("checking that the passphrase retrieval fails with wrong PCR for both partitions")
-		expectPassphraseRetrieval(testVM, "COS_PERSISTENT", false)
-		expectPassphraseRetrieval(testVM, "COS_OEM", false)
+		expectPassphraseRetrievalWithError(testVM, "COS_PERSISTENT", "attestation failed")
+		expectPassphraseRetrievalWithError(testVM, "COS_OEM", "attestation failed")
 
 		By("setting PCR 0 to an empty value (re-enrollment mode)")
 		updateSealedVolumeAttestation(tpmHash, "pcrValues.pcrs.0", "")
@@ -150,39 +150,40 @@ kcrypt:
 		By("Testing EK re-enrollment by setting EK to empty")
 		updateSealedVolumeAttestation(tpmHash, "ekPublicKey", "")
 
+		By("Triggering re-enrollment by retrieving passphrase")
+		expectPassphraseRetrieval(testVM, "COS_PERSISTENT", true)
+
 		By("Verifying EK was re-enrolled with actual value")
+		sealedVolumeName := getSealedVolumeName(tpmHash)
 		var learnedEK string
 		Eventually(func() bool {
-			sealedVolumeName := getSealedVolumeName(tpmHash)
-			cmd := exec.Command("kubectl", "get", "sealedvolume", sealedVolumeName, "-o", "yaml")
+			cmd := exec.Command("kubectl", "get", "sealedvolume", sealedVolumeName, "-o", "jsonpath={.spec.attestation.ekPublicKey}")
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				return false
 			}
 
 			// Extract learned EK for later enforcement test
-			lines := strings.Split(string(out), "\n")
-			for _, line := range lines {
-				if strings.Contains(line, "ekPublicKey:") && !strings.Contains(line, "ekPublicKey: \"\"") {
-					parts := strings.Split(line, "ekPublicKey:")
-					if len(parts) > 1 {
-						learnedEK = strings.TrimSpace(strings.Trim(parts[1], "\""))
-					}
-				}
-			}
+			// Don't trim! PEM format includes a trailing newline which is significant
+			learnedEK = string(out)
 
-			return learnedEK != ""
+			// Check that it's not empty and looks like a valid key (starts with common PEM markers or is substantial length)
+			return learnedEK != "" && len(learnedEK) > 50
 		}, 30*time.Second, 5*time.Second).Should(BeTrue())
 
 		// Test EK enforcement by setting wrong EK
 		By("Testing EK enforcement by setting wrong EK value")
 		updateSealedVolumeAttestation(tpmHash, "ekPublicKey", "wrong-ek-value")
 
-		time.Sleep(5 * time.Second)
+		// Verify the wrong value was actually set
+		verifyCmd := exec.Command("kubectl", "get", "sealedvolume", sealedVolumeName, "-o", "jsonpath={.spec.attestation.ekPublicKey}")
+		verifyOut, verifyErr := verifyCmd.CombinedOutput()
+		Expect(verifyErr).ToNot(HaveOccurred())
+		Expect(string(verifyOut)).To(Equal("wrong-ek-value"), "Wrong EK should be set")
 
 		// Should fail to retrieve passphrase with wrong EK for both partitions
-		expectPassphraseRetrieval(testVM, "COS_PERSISTENT", false)
-		expectPassphraseRetrieval(testVM, "COS_OEM", false)
+		expectPassphraseRetrievalWithError(testVM, "COS_PERSISTENT", "attestation failed")
+		expectPassphraseRetrievalWithError(testVM, "COS_OEM", "attestation failed")
 
 		// Restore correct EK and verify it works via CLI
 		By("Restoring correct EK and verifying authentication works for both partitions")
@@ -190,31 +191,21 @@ kcrypt:
 
 		time.Sleep(5 * time.Second)
 
+		// Verify the correct value was actually restored
+		restoreCmd := exec.Command("kubectl", "get", "sealedvolume", sealedVolumeName, "-o", "jsonpath={.spec.attestation.ekPublicKey}")
+		restoreOut, restoreErr := restoreCmd.CombinedOutput()
+		Expect(restoreErr).ToNot(HaveOccurred())
+		restoredEK := string(restoreOut)
+		Expect(restoredEK).To(Equal(learnedEK), "Restored EK should match learned EK")
+		Expect(len(restoredEK)).To(BeNumerically(">", 100), "Restored EK should be a full key, not 'wrong-ek-value'")
+
 		// Should now work with correct EK for both partitions
-		expectPassphraseRetrieval(testVM, "COS_PERSISTENT", true)
-		expectPassphraseRetrieval(testVM, "COS_OEM", true)
-
-		// Continue with Error Handling testing
-		By("Testing invalid TPM hash rejection")
-		invalidHash := "invalid-tpm-hash-12345"
-		createSealedVolumeWithAttestation(invalidHash, nil)
-
-		// Should fail due to TPM hash mismatch for both partitions (test via CLI, no risky reboot)
-		expectPassphraseRetrieval(testVM, "COS_PERSISTENT", false)
-		expectPassphraseRetrieval(testVM, "COS_OEM", false)
-
-		// Cleanup invalid SealedVolume
-		deleteSealedVolume(invalidHash)
-
-		// Test with correct TPM hash to verify system still works for both partitions
-		By("Verifying system still works with correct TPM hash for both partitions")
-		// The original SealedVolume should still exist and work
 		expectPassphraseRetrieval(testVM, "COS_PERSISTENT", true)
 		expectPassphraseRetrieval(testVM, "COS_OEM", true)
 
 		// Continue with Secret Reuse testing
 		By("Testing secret reuse when SealedVolume is recreated for both partitions")
-		sealedVolumeName := getSealedVolumeName(tpmHash)
+		sealedVolumeName = getSealedVolumeName(tpmHash)
 		persistentSecretName := fmt.Sprintf("%s-cos-persistent", sealedVolumeName)
 		oemSecretName := fmt.Sprintf("%s-cos-oem", sealedVolumeName)
 

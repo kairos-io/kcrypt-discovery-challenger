@@ -132,8 +132,9 @@ kcrypt:
 			verifyEncryptedPartition(testVM)
 
 			By("Testing that CLI passphrase retrieval works")
-			success := checkPassphraseRetrieval(testVM, "COS_PERSISTENT")
-			Expect(success).To(BeTrue(), "Passphrase retrieval should succeed with EK-only verification")
+			passphrase, err := checkPassphraseRetrieval(testVM, "COS_PERSISTENT")
+			Expect(err).ToNot(HaveOccurred(), "Passphrase retrieval should succeed with EK-only verification")
+			Expect(passphrase).ToNot(BeEmpty())
 		})
 	})
 
@@ -258,8 +259,9 @@ kcrypt:
 			verifyEncryptedPartition(testVM)
 
 			By("Testing that CLI passphrase retrieval works")
-			success := checkPassphraseRetrieval(testVM, "COS_PERSISTENT")
-			Expect(success).To(BeTrue(), "Passphrase retrieval should succeed with selective PCR tracking")
+			passphrase, err := checkPassphraseRetrieval(testVM, "COS_PERSISTENT")
+			Expect(err).ToNot(HaveOccurred(), "Passphrase retrieval should succeed with selective PCR tracking")
+			Expect(passphrase).ToNot(BeEmpty())
 		})
 	})
 
