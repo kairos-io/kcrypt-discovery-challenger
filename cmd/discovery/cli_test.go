@@ -95,15 +95,18 @@ var _ = Describe("CLI Interface", func() {
 			// Override the log file location for testing
 			originalLogFile = os.Getenv("KAIROS_LOG_FILE")
 			testLogFile = filepath.Join(tempDir, "kcrypt-discovery-challenger.log")
-			os.Setenv("KAIROS_LOG_FILE", testLogFile)
+			err = os.Setenv("KAIROS_LOG_FILE", testLogFile)
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		AfterEach(func() {
 			// Restore original log file setting
 			if originalLogFile != "" {
-				os.Setenv("KAIROS_LOG_FILE", originalLogFile)
+				err := os.Setenv("KAIROS_LOG_FILE", originalLogFile)
+				Expect(err).NotTo(HaveOccurred())
 			} else {
-				os.Unsetenv("KAIROS_LOG_FILE")
+				err := os.Unsetenv("KAIROS_LOG_FILE")
+				Expect(err).NotTo(HaveOccurred())
 			}
 
 			// Clean up config file

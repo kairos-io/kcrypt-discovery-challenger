@@ -473,7 +473,7 @@ kcrypt:
 			// Get the full SealedVolume and update it
 			cmd := exec.Command("kubectl", "get", "sealedvolume", sealedVolumeName, "-o", "yaml")
 			out, err := cmd.CombinedOutput()
-			Expect(err).ToNot(HaveOccurred())
+			Expect(err).ToNot(HaveOccurred(), string(out))
 
 			// Parse and modify the SealedVolume
 			// Set PCR 0 to empty (re-enrollment mode)
