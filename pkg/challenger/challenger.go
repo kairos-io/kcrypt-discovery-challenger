@@ -7,10 +7,9 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -22,7 +21,6 @@ import (
 
 	"github.com/kairos-io/kairos-challenger/controllers"
 	"github.com/kairos-io/kairos-challenger/pkg/attestation"
-	tpm "github.com/kairos-io/tpm-helpers"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -116,11 +114,7 @@ func (ca *ChallengerAttestator) IssuePassphrase(ctx context.Context, req attesta
 		}
 	} else if enrollmentContext.IsNewPartition {
 		// This is a new partition for an existing TPM - add partition to existing SealedVolume
-		if err := addPartitionToExistingVolume(enrollmentContext, &ClientAttestation{
-			EK:        ek,
-			PCRValues: pcrValues,
-			PCRQuote:  nil, // Not used in enrollment (only PCR values are stored)
-		}, ca.reconciler, ca.kclient, ca.namespace, ca.logger); err != nil {
+		if err := addPartitionToExistingVolume(enrollmentContext, ca.reconciler, ca.kclient, ca.namespace, ca.logger); err != nil {
 			return nil, fmt.Errorf("adding new partition: %w", err)
 		}
 	} else {
@@ -182,43 +176,6 @@ func (s SealedVolumeData) DefaultSecret() (string, string) {
 		secretPath = s.SecretPath
 	}
 	return safeKubeName(secretName), safeKubeName(secretPath)
-}
-
-// isConnectionClosed checks if the error is about an already closed connection
-func isConnectionClosed(err error) bool {
-	return strings.Contains(err.Error(), "use of closed network connection") ||
-		strings.Contains(err.Error(), "connection closed")
-}
-
-func writeRead(conn *websocket.Conn, input []byte) ([]byte, error) {
-	writer, err := conn.NextWriter(websocket.BinaryMessage)
-	if err != nil {
-		return nil, err
-	}
-
-	if _, err := writer.Write(input); err != nil {
-		return nil, err
-	}
-
-	if err := writer.Close(); err != nil {
-		return nil, err
-	}
-
-	_, reader, err := conn.NextReader()
-	if err != nil {
-		return nil, err
-	}
-
-	return ioutil.ReadAll(reader)
-}
-
-func getPubHashFromEK(ekBytes []byte) (string, error) {
-	// Need to decode the EK bytes first to get the proper EK structure
-	ek, err := tpm.DecodeEK(ekBytes)
-	if err != nil {
-		return "", err
-	}
-	return tpm.DecodePubHash(ek)
 }
 
 // generateTOFUPassphrase creates a cryptographically secure random passphrase for TOFU enrollment
@@ -413,7 +370,6 @@ type PartitionInfo struct {
 }
 
 // ClientAttestation holds all client-provided attestation data
-// Note: AK (Attestation Key) is not stored as we use transient AKs for enrollment
 type ClientAttestation struct {
 	EK        *attest.EK
 	PCRQuote  []byte
@@ -452,22 +408,8 @@ func encodeEKToPEM(ek *attest.EK) (string, error) {
 	return string(pem.EncodeToMemory(pemBlock)), nil
 }
 
-// encodeAKToPEM converts attestation parameters to PEM format for storage
-func encodeAKToPEM(akParams *attest.AttestationParameters) (string, error) {
-
-	// The akParams.Public contains raw TPMT_PUBLIC bytes from the TPM
-	// We store these raw bytes in PEM format for enrollment record keeping
-	// This enables TOFU verification and audit purposes using modern go-tpm v0.9.x API
-
-	pemBlock := &pem.Block{
-		Type:  "TPM ATTESTATION KEY",
-		Bytes: akParams.Public,
-	}
-	return string(pem.EncodeToMemory(pemBlock)), nil
-}
-
 // pubBytesFromKey marshals a public key to DER format
-func pubBytesFromKey(pub interface{}) ([]byte, error) {
+func pubBytesFromKey(pub any) ([]byte, error) {
 	data, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling public key: %v", err)
@@ -485,7 +427,8 @@ func parseEKFromPEM(ekPEM []byte) (*attest.EK, error) {
 	block, _ := pem.Decode(ekPEM)
 	if block != nil {
 		// It's PEM format
-		if block.Type == "CERTIFICATE" {
+		switch block.Type {
+		case "CERTIFICATE":
 			// EK certificate
 			cert, err := x509.ParseCertificate(block.Bytes)
 			if err != nil {
@@ -495,7 +438,7 @@ func parseEKFromPEM(ekPEM []byte) (*attest.EK, error) {
 				Certificate: cert,
 				Public:      cert.PublicKey,
 			}, nil
-		} else if block.Type == "PUBLIC KEY" {
+		case "PUBLIC KEY":
 			// EK public key
 			pub, err := x509.ParsePKIXPublicKey(block.Bytes)
 			if err != nil {
@@ -511,131 +454,6 @@ func parseEKFromPEM(ekPEM []byte) (*attest.EK, error) {
 		return nil, fmt.Errorf("parsing EK as DER: %w", err)
 	}
 	return &attest.EK{Public: pub}, nil
-}
-
-// verifyEKMatch compares the current EK public key with the enrolled one (transient AK approach)
-func verifyEKMatch(sealedVolume *keyserverv1alpha1.SealedVolume, currentEK *attest.EK, logger logr.Logger) error {
-	// Get the stored EK from the SealedVolume's attestation spec
-	if sealedVolume.Spec.Attestation == nil {
-		return fmt.Errorf("no attestation data in SealedVolume for verification")
-	}
-
-	storedEKPEM := sealedVolume.Spec.Attestation.EKPublicKey
-	if storedEKPEM == "" {
-		return fmt.Errorf("no EK public key stored in SealedVolume for verification")
-	}
-
-	// Encode current EK to PEM for comparison
-	currentEKPEM, err := encodeEKToPEM(currentEK)
-	if err != nil {
-		return fmt.Errorf("encoding current EK to PEM: %w", err)
-	}
-
-	// Compare the PEM-encoded EK public keys
-	if storedEKPEM != currentEKPEM {
-		logger.Info("EK mismatch detected",
-			"storedEKLength", len(storedEKPEM),
-			"currentEKLength", len(currentEKPEM))
-		return fmt.Errorf("EK public key does not match enrolled key - potential TPM impersonation")
-	}
-
-	logger.Info("EK verification successful - matches enrolled key")
-	return nil
-}
-
-// verifyPCRMatch compares current PCR values with enrolled ones
-func verifyPCRMatch(sealedVolume *keyserverv1alpha1.SealedVolume, pcrQuote []byte, logger logr.Logger) error {
-	// Extract current PCR values from the quote
-	currentPCRs, err := extractPCRValues(pcrQuote)
-	if err != nil {
-		return fmt.Errorf("extracting current PCR values: %w", err)
-	}
-
-	// Get stored PCR values from SealedVolume's attestation spec
-	if sealedVolume.Spec.Attestation == nil || sealedVolume.Spec.Attestation.PCRValues == nil {
-		logger.Info("No PCR values stored during enrollment - skipping PCR verification")
-		return nil
-	}
-
-	storedPCRs := sealedVolume.Spec.Attestation.PCRValues
-
-	// Compare PCR values
-	if err := comparePCRValues(storedPCRs, currentPCRs, logger); err != nil {
-		return fmt.Errorf("PCR values changed since enrollment: %w", err)
-	}
-
-	logger.Info("PCR verification successful - boot state matches enrollment")
-	return nil
-}
-
-// comparePCRValues compares stored and current PCR values
-func comparePCRValues(stored, current *keyserverv1alpha1.PCRValues, logger logr.Logger) error {
-	// Count how many PCR values are actually stored and current
-	storedCount := countNonEmptyPCRs(stored)
-	currentCount := countNonEmptyPCRs(current)
-
-	logger.Info("PCR verification", "storedPCRs", storedCount, "currentPCRs", currentCount)
-
-	// Case 1: No PCRs stored during enrollment - expect consistency
-	if storedCount == 0 {
-		if currentCount > 0 {
-			logger.Info("PCR consistency violation - enrollment had no PCRs but current attestation provides PCRs")
-			return fmt.Errorf("enrollment had empty PCRs but current attestation has PCR values - inconsistent state")
-		}
-		logger.Info("PCR verification: both enrollment and current attestation have empty PCRs - consistent")
-		return nil
-	}
-
-	// Case 2: PCRs were stored during enrollment - strict verification required
-	if currentCount == 0 {
-		return fmt.Errorf("PCRs were stored during enrollment but none provided now - possible PCR extraction failure")
-	}
-
-	// Case 3: Compare actual PCR values using flexible PCR map
-	storedPCRs := stored.PCRs
-	currentPCRs := current.PCRs
-
-	if storedPCRs == nil {
-		storedPCRs = make(map[string]string)
-	}
-	if currentPCRs == nil {
-		currentPCRs = make(map[string]string)
-	}
-
-	// Compare each stored PCR against current PCRs
-	for pcrIndex, storedValue := range storedPCRs {
-		if storedValue == "" {
-			continue // Skip empty PCR values
-		}
-
-		currentValue, exists := currentPCRs[pcrIndex]
-		if !exists || currentValue == "" {
-			return fmt.Errorf("PCR%s was stored during enrollment but not provided now", pcrIndex)
-		}
-
-		if storedValue != currentValue {
-			logger.Info("PCR mismatch", "pcr", pcrIndex, "stored", storedValue, "current", currentValue)
-			return fmt.Errorf("PCR%s changed - boot state verification failed", pcrIndex)
-		}
-	}
-
-	logger.Info("PCR verification successful - all stored PCRs match current values")
-	return nil
-}
-
-// countNonEmptyPCRs counts how many PCR values are non-empty
-func countNonEmptyPCRs(pcrs *keyserverv1alpha1.PCRValues) int {
-	if pcrs == nil || pcrs.PCRs == nil {
-		return 0
-	}
-
-	count := 0
-	for _, value := range pcrs.PCRs {
-		if value != "" {
-			count++
-		}
-	}
-	return count
 }
 
 func Start(ctx context.Context, logger logr.Logger, kclient *kubernetes.Clientset, reconciler *controllers.SealedVolumeReconciler, namespace, address string) {
@@ -664,7 +482,7 @@ func Start(ctx context.Context, logger logr.Logger, kclient *kubernetes.Clientse
 
 	go func() {
 		<-ctx.Done()
-		s.Shutdown(ctx)
+		_ = s.Shutdown(ctx)
 	}()
 }
 
@@ -732,7 +550,7 @@ func sendErrorResponse(conn *websocket.Conn, logger logr.Logger, errorMsg string
 	}
 
 	// Also close the connection to signal error condition
-	conn.Close()
+	_ = conn.Close()
 }
 
 func logRequestHandler(logger logr.Logger, h http.Handler) http.Handler {
@@ -873,7 +691,7 @@ func performInitialEnrollment(ctx *EnrollmentContext, attestation *ClientAttesta
 }
 
 // addPartitionToExistingVolume adds a new partition to an existing SealedVolume
-func addPartitionToExistingVolume(ctx *EnrollmentContext, attestation *ClientAttestation, reconciler *controllers.SealedVolumeReconciler, kclient *kubernetes.Clientset, namespace string, logger logr.Logger) error {
+func addPartitionToExistingVolume(ctx *EnrollmentContext, reconciler *controllers.SealedVolumeReconciler, kclient *kubernetes.Clientset, namespace string, logger logr.Logger) error {
 	logger.Info("Adding new partition to existing SealedVolume")
 
 	// Generate secret name and path for the new partition using DefaultSecret logic
@@ -1085,181 +903,12 @@ func updateEnrollmentData(ctx *EnrollmentContext, attestation *ClientAttestation
 	return nil
 }
 
-// sendPassphrase retrieves and securely sends the passphrase to the client
-func sendPassphrase(conn *websocket.Conn, ctx *EnrollmentContext, kclient *kubernetes.Clientset, namespace string, logger logr.Logger) error {
-	// After performInitialEnrollment, VolumeData should always be populated
-	if ctx.VolumeData == nil {
-		return fmt.Errorf("no volume data available - enrollment may have failed")
-	}
-
-	// Get secret name and path from the enrolled volume data
-	secretName, secretPath := ctx.VolumeData.DefaultSecret()
-	logger.Info("Retrieving passphrase", "secretName", secretName, "tpmHash", ctx.TPMHash[:8])
-
-	// Retrieve the secret
-	secret, err := kclient.CoreV1().Secrets(namespace).Get(context.TODO(), secretName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("retrieving secret: %w", err)
-	}
-
-	secretData, exists := secret.Data[secretPath]
-	if !exists {
-		return fmt.Errorf("passphrase not found in secret at key: %s", secretPath)
-	}
-
-	// Send passphrase securely to client
-	response := tpm.ProofResponse{
-		Passphrase: secretData,
-	}
-
-	if err := conn.WriteJSON(response); err != nil {
-		return fmt.Errorf("sending passphrase response: %w", err)
-	}
-
-	logger.Info("Passphrase sent successfully to client")
-	return nil
-}
-
 // updateLastVerificationTimestamp updates the last verification time for an existing SealedVolume
 func updateLastVerificationTimestamp(reconciler *controllers.SealedVolumeReconciler, namespace, tpmHash string) error {
 	// This would need to be implemented in the reconciler to update the LastVerifiedAt field
 	// For now, we'll log that it should be updated
 	// NOTE: Reconciler method to update verification timestamps needs implementation
 	return nil
-}
-
-// extractPCRValues extracts PCR values from a TPM quote for verification
-func extractPCRValues(quote []byte) (*keyserverv1alpha1.PCRValues, error) {
-	if len(quote) == 0 {
-		return &keyserverv1alpha1.PCRValues{}, nil
-	}
-
-	// Parse the quote format from tmp-helpers with flexible PCR selection
-	var quoteData struct {
-		Quote struct {
-			Version   string `json:"version"`
-			Quote     []byte `json:"quote"`
-			Signature []byte `json:"signature"`
-		} `json:"quote"`
-		PCRs map[int][]byte `json:"pcrs"`
-	}
-
-	if err := json.Unmarshal(quote, &quoteData); err != nil {
-		return nil, fmt.Errorf("unmarshaling quote data: %w", err)
-	}
-
-	// Extract PCRs from the flexible map
-	pcrValues := &keyserverv1alpha1.PCRValues{
-		PCRs: make(map[string]string),
-	}
-
-	if quoteData.PCRs != nil {
-		// Populate the flexible PCRs map
-		for pcrIndex, pcrValue := range quoteData.PCRs {
-			if len(pcrValue) > 0 {
-				pcrValues.PCRs[fmt.Sprintf("%d", pcrIndex)] = fmt.Sprintf("%x", pcrValue)
-			}
-		}
-	}
-
-	// Validate that the quote contains valid PCR indices
-	for pcrIndex := range quoteData.PCRs {
-		if pcrIndex < 0 || pcrIndex > 23 {
-			return nil, fmt.Errorf("invalid PCR index %d in quote (valid range: 0-23)", pcrIndex)
-		}
-	}
-
-	return pcrValues, nil
-}
-
-// equalIntSlices compares two int slices for equality
-func equalIntSlices(a, b []int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i, v := range a {
-		if v != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-// verifyPCRValues compares current PCR values against stored expected values
-func verifyPCRValues(current, expected *keyserverv1alpha1.PCRValues, logger logr.Logger) error {
-	if expected == nil || expected.PCRs == nil {
-		// No expected values stored (first-time enrollment), accept any values
-		logger.Info("No expected PCR values stored, accepting current values")
-		return nil
-	}
-
-	if current == nil || current.PCRs == nil {
-		return fmt.Errorf("no current PCR values provided")
-	}
-
-	// Compare each expected PCR value
-	for pcrIndex, expectedValue := range expected.PCRs {
-		if expectedValue == "" {
-			continue // Skip empty expected values
-		}
-
-		currentValue, exists := current.PCRs[pcrIndex]
-		if !exists || currentValue == "" {
-			return fmt.Errorf("PCR%s mismatch: expected %s, but not provided in current values", pcrIndex, expectedValue)
-		}
-
-		if expectedValue != currentValue {
-			return fmt.Errorf("PCR%s mismatch: expected %s, got %s", pcrIndex, expectedValue, currentValue)
-		}
-	}
-
-	logger.Info("PCR verification successful")
-	return nil
-}
-
-// quarantineSealedVolume marks a SealedVolume as quarantined due to PCR verification failure
-func quarantineSealedVolume(reconciler *controllers.SealedVolumeReconciler, namespace, tpmHash string, logger logr.Logger) error {
-	// Find the SealedVolume by TPM hash
-	volumeList := &keyserverv1alpha1.SealedVolumeList{}
-	err := reconciler.List(context.TODO(), volumeList, client.InNamespace(namespace))
-	if err != nil {
-		return fmt.Errorf("listing sealed volumes for quarantine: %w", err)
-	}
-
-	for i, volume := range volumeList.Items {
-		if volume.Spec.TPMHash == tpmHash {
-			// Mark as quarantined
-			volumeList.Items[i].Spec.Quarantined = true
-
-			// Update the resource
-			err := reconciler.Update(context.TODO(), &volumeList.Items[i])
-			if err != nil {
-				return fmt.Errorf("updating sealed volume to quarantine: %w", err)
-			}
-
-			logger.Info("SealedVolume quarantined due to PCR verification failure", "tpmHash", tpmHash)
-			return nil
-		}
-	}
-
-	return fmt.Errorf("SealedVolume not found for quarantine")
-}
-
-// getSealedVolumeByTPMHash retrieves the full SealedVolume resource by TPM hash
-func getSealedVolumeByTPMHash(reconciler *controllers.SealedVolumeReconciler, namespace, tpmHash string) (*keyserverv1alpha1.SealedVolume, error) {
-	volumeList := &keyserverv1alpha1.SealedVolumeList{}
-	err := reconciler.List(context.TODO(), volumeList, client.InNamespace(namespace))
-	if err != nil {
-		return nil, fmt.Errorf("listing sealed volumes: %w", err)
-	}
-
-	for _, volume := range volumeList.Items {
-		if volume.Spec.TPMHash == tpmHash {
-			return &volume, nil
-		}
-	}
-
-	return nil, fmt.Errorf("SealedVolume not found for TPM hash: %s", tpmHash)
 }
 
 // verifyEKMatchSelective compares the current EK public key with the enrolled one using selective enrollment logic (transient AK approach)
@@ -1402,9 +1051,7 @@ func createInitialTOFUAttestation(currentPCRs *keyserverv1alpha1.PCRValues, logg
 		}
 
 		// Copy all PCRs - don't filter any out
-		for pcrIndex, pcrValue := range currentPCRs.PCRs {
-			attestation.PCRValues.PCRs[pcrIndex] = pcrValue
-		}
+		maps.Copy(attestation.PCRValues.PCRs, currentPCRs.PCRs)
 
 		logger.Info("Stored ALL PCR values for initial TOFU enrollment",
 			"pcrCount", len(attestation.PCRValues.PCRs),

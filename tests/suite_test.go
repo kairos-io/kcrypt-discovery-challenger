@@ -12,7 +12,6 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	process "github.com/mudler/go-processmanager"
@@ -30,16 +29,7 @@ var globalVM *VM
 func TestE2e(t *testing.T) {
 	RegisterFailHandler(printChallengerLogsOnFailure)
 	//RegisterFailHandler(Fail)
-	//RegisterFailHandler(waitFail)
 	RunSpecs(t, "kcrypt-challenger e2e test Suite")
-}
-
-func waitFail(message string, callerSkip ...int) {
-	fmt.Println(message)
-	fmt.Println("failed, will sleep now")
-	time.Sleep(30 * time.Minute)
-
-	Fail(message, callerSkip[0]+1)
 }
 
 type VMOptions struct {
@@ -359,7 +349,7 @@ func getSealedVolumeName(tpmHash string) string {
 }
 
 // Helper to create SealedVolume with specific attestation configuration
-func createSealedVolumeWithAttestation(tpmHash string, attestationConfig map[string]interface{}) {
+func createSealedVolumeWithAttestation(tpmHash string, attestationConfig map[string]any) {
 	sealedVolumeName := getSealedVolumeName(tpmHash)
 	sealedVolumeYaml := fmt.Sprintf(`---
 apiVersion: keyserver.kairos.io/v1alpha1
@@ -455,13 +445,6 @@ func secretExists(secretName string) bool {
 	return err == nil && len(out) > 0 && !strings.Contains(string(out), "NotFound")
 }
 
-// Helper to check if secret exists in namespace
-func secretExistsInNamespace(secretName, namespace string) bool {
-	cmd := exec.Command("kubectl", "get", "secret", secretName, "-n", namespace, "--ignore-not-found=true")
-	out, err := cmd.CombinedOutput()
-	return err == nil && len(out) > 0 && !strings.Contains(string(out), "NotFound")
-}
-
 // Helper to apply YAML to Kubernetes
 func kubectlApplyYaml(yamlData string) {
 	yamlFile, err := os.CreateTemp("", "")
@@ -476,57 +459,6 @@ func kubectlApplyYaml(yamlData string) {
 	Expect(err).ToNot(HaveOccurred(), string(out))
 }
 
-// Helper to create SealedVolume with multi-partition configuration
-func createMultiPartitionSealedVolume(tpmHash string, partitions []string) {
-	sealedVolumeYaml := fmt.Sprintf(`---
-apiVersion: keyserver.kairos.io/v1alpha1
-kind: SealedVolume
-metadata:
-  name: "%s"
-  namespace: default
-spec:
-  TPMHash: "%s"
-  partitions:`, tpmHash, tpmHash)
-
-	for _, partition := range partitions {
-		sealedVolumeYaml += fmt.Sprintf(`
-    - label: %s`, partition)
-	}
-
-	sealedVolumeYaml += "\n  quarantined: false"
-
-	By(fmt.Sprintf("Creating multi-partition SealedVolume for partitions: %v", partitions))
-	kubectlApplyYaml(sealedVolumeYaml)
-}
-
-// Helper to create SealedVolume in specific namespace
-func createSealedVolumeInNamespace(tpmHash, namespace string) {
-	// First create the namespace if it doesn't exist with test labels
-	kubectlApplyYaml(fmt.Sprintf(`---
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: %s
-  labels:
-    test.kcrypt.kairos.io/type: test-namespace
-    test.kcrypt.kairos.io/purpose: kcrypt-challenger-testing`, namespace))
-
-	sealedVolumeYaml := fmt.Sprintf(`---
-apiVersion: keyserver.kairos.io/v1alpha1
-kind: SealedVolume
-metadata:
-  name: "%s"
-  namespace: %s
-spec:
-  TPMHash: "%s"
-  partitions:
-    - label: COS_PERSISTENT
-  quarantined: false`, tpmHash, namespace, tpmHash)
-
-	By(fmt.Sprintf("Creating SealedVolume in namespace %s", namespace))
-	kubectlApplyYaml(sealedVolumeYaml)
-}
-
 // Helper to cleanup test resources
 func cleanupTestResources(tpmHash string) {
 	if tpmHash != "" {
@@ -537,14 +469,6 @@ func cleanupTestResources(tpmHash string) {
 		cmd := exec.Command("kubectl", "delete", "secret",
 			"-l", fmt.Sprintf("kcrypt.kairos.io/tpm-hash=%s", tpmHash),
 			"--ignore-not-found=true", "--all-namespaces")
-		cmd.CombinedOutput()
-	}
-}
-
-// Helper to delete specific test namespaces
-func deleteTestNamespaces(namespaces ...string) {
-	for _, namespace := range namespaces {
-		cmd := exec.Command("kubectl", "delete", "namespace", namespace, "--ignore-not-found=true")
 		cmd.CombinedOutput()
 	}
 }

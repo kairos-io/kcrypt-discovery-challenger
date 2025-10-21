@@ -1,16 +1,12 @@
 package client
 
 import (
-	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/google/go-attestation/attest"
 	"github.com/gorilla/websocket"
 	"github.com/jaypipes/ghw/pkg/block"
 	"github.com/kairos-io/kairos-challenger/pkg/attestation"
@@ -25,9 +21,6 @@ const (
 	TPMRetryDelay     = 100 * time.Millisecond // Brief delay for TPM hardware busy/unavailable
 	NetworkRetryDelay = 1 * time.Second        // Longer delay for network/server issues
 )
-
-var errPartNotFound error = fmt.Errorf("pass for partition not found")
-var errBadCertificate error = fmt.Errorf("unknown certificate")
 
 func NewClient() (*Client, error) {
 	return NewClientWithLogger(types.NewKairosLogger("kcrypt-challenger-client", "error", false))
@@ -80,8 +73,8 @@ func (c *Client) Start(eventType pluggable.EventType) error {
 	return factory.Run(eventType, os.Stdin, os.Stdout)
 }
 
-// ❯ echo '{ "data": "{ \\"label\\": \\"LABEL\\" }"}' | sudo -E WSS_SERVER="http://localhost:8082/challenge" ./challenger "discovery.password"
 // GetPassphrase retrieves a passphrase for the given partition - core business logic
+// ❯ echo '{ "data": "{ \\"label\\": \\"LABEL\\" }"}' | sudo -E WSS_SERVER="http://localhost:8082/challenge" ./challenger "discovery.password"
 func (c *Client) GetPassphrase(partition *block.Partition, attempts int) (string, error) {
 	serverURL := c.Config.Kcrypt.Challenger.Server
 
@@ -129,7 +122,7 @@ func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders 
 	}()
 
 	var lastErr error
-	for tries := 0; tries < attempts; tries++ {
+	for tries := range attempts {
 		c.Logger.Debugf("Debug: TPM attestation attempt %d/%d", tries+1, attempts)
 
 		// Step 2: Start WebSocket-based attestation flow
@@ -189,7 +182,7 @@ func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[st
 
 	// Add connection timeout to prevent hanging indefinitely
 	type connectionResult struct {
-		conn interface{}
+		conn any
 		err  error
 	}
 
@@ -281,48 +274,4 @@ func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[st
 
 	c.Logger.Debugf("Passphrase received successfully")
 	return string(response.Passphrase), nil
-}
-
-// decryptPassphrase decodes (base64) and decrypts the passphrase returned
-// by the challenger server.
-func (c *Client) decryptPassphrase(pass string) (string, error) {
-	blob, err := base64.RawURLEncoding.DecodeString(pass)
-	if err != nil {
-		return "", err
-	}
-
-	// Decrypt and return it to unseal the LUKS volume
-	opts := []tpm.TPMOption{}
-	if c.Config.Kcrypt.Challenger.CIndex != "" {
-		opts = append(opts, tpm.WithIndex(c.Config.Kcrypt.Challenger.CIndex))
-	}
-	if c.Config.Kcrypt.Challenger.TPMDevice != "" {
-		opts = append(opts, tpm.WithDevice(c.Config.Kcrypt.Challenger.TPMDevice))
-	}
-	passBytes, err := tpm.DecryptBlob(blob, opts...)
-
-	return string(passBytes), err
-}
-
-// encodeEKToBytes encodes an EK to PEM bytes for transmission
-func encodeEKToBytes(ek *attest.EK) ([]byte, error) {
-	if ek.Certificate != nil {
-		pemBlock := &pem.Block{
-			Type:  "CERTIFICATE",
-			Bytes: ek.Certificate.Raw,
-		}
-		return pem.EncodeToMemory(pemBlock), nil
-	}
-
-	// For EKs without certificates, marshal the public key
-	pubBytes, err := x509.MarshalPKIXPublicKey(ek.Public)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling EK public key: %w", err)
-	}
-
-	pemBlock := &pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: pubBytes,
-	}
-	return pem.EncodeToMemory(pemBlock), nil
 }
