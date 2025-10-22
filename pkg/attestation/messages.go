@@ -8,9 +8,12 @@ import (
 // AttestationInit is sent by the client at the start of the flow.
 // EKPublic is the SPKI-encoded public key (PKIX) of the EK.
 // AKParams are the attestation parameters of the transient AK.
+// DeferPCREnrollment indicates that PCR values should be set to empty strings
+// for later enrollment (used in livecd mode where PCRs will differ after installation).
 type AttestationInit struct {
-	EKPublic []byte          `json:"ek_public"`
-	AKParams json.RawMessage `json:"ak_params"` // marshaled attest.AttestationParameters
+	EKPublic           []byte          `json:"ek_public"`
+	AKParams           json.RawMessage `json:"ak_params"` // marshaled attest.AttestationParameters
+	DeferPCREnrollment bool            `json:"defer_pcr_enrollment,omitempty"`
 }
 
 // AttestationChallenge is returned by the server: a JSON-encoded attest.EncryptedCredential

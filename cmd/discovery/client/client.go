@@ -11,6 +11,7 @@ import (
 	"github.com/jaypipes/ghw/pkg/block"
 	"github.com/kairos-io/kairos-challenger/pkg/attestation"
 	"github.com/kairos-io/kairos-sdk/kcrypt/bus"
+	"github.com/kairos-io/kairos-sdk/state"
 	"github.com/kairos-io/kairos-sdk/types"
 	"github.com/kairos-io/tpm-helpers"
 	"github.com/mudler/go-pluggable"
@@ -152,6 +153,22 @@ func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders 
 	return "", fmt.Errorf("exhausted all attempts (%d) for TPM attestation", attempts)
 }
 
+// isLiveCDMode checks if the system is running in livecd mode
+// using kairos-sdk state detection (same as `kairos-agent state get boot`)
+func isLiveCDMode(logger types.KairosLogger) bool {
+	// Create a zerolog logger from the kairos logger for compatibility
+	runtime, err := state.NewRuntime()
+	if err != nil {
+		logger.Debugf("Failed to detect runtime state, assuming not livecd: %v", err)
+		return false
+	}
+
+	// Check if boot state is LiveCD
+	isLiveCD := runtime.BootState == state.LiveCD
+	logger.Debugf("Detected boot state: %s (isLiveCD: %v)", runtime.BootState, isLiveCD)
+	return isLiveCD
+}
+
 // performTPMAttestation handles the complete attestation flow over a single WebSocket connection
 func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[string]string, attestationClient *attestation.RemoteAttestationClient, p *block.Partition) (string, error) {
 	c.Logger.Debugf("Debug: Creating WebSocket connection to endpoint: %s", endpoint)
@@ -217,10 +234,20 @@ func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[st
 
 	// Protocol Step 1: Create and send attestation init
 	c.Logger.Debugf("Debug: Creating attestation init")
-	init, err := attestationClient.CreateInit()
+
+	// Check if we're in livecd mode - if so, defer PCR enrollment
+	var init *attestation.AttestationInit
+	var err error
+	if isLiveCDMode(c.Logger) {
+		c.Logger.Debugf("Debug: LiveCD mode detected - deferring PCR enrollment")
+		init, err = attestationClient.CreateInitDeferredEnrollment()
+	} else {
+		init, err = attestationClient.CreateInit()
+	}
 	if err != nil {
 		return "", fmt.Errorf("creating attestation init: %w", err)
 	}
+
 	c.Logger.Debugf("Debug: Sending attestation init to server")
 	if err := conn.WriteJSON(init); err != nil {
 		return "", fmt.Errorf("sending attestation init: %w", err)

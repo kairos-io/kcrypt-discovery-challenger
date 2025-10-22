@@ -86,6 +86,44 @@ func (ca *ChallengerAttestator) IssuePassphrase(ctx context.Context, req attesta
 		return nil, fmt.Errorf("determining enrollment context: %w", err)
 	}
 
+	// Handle DeferPCREnrollment flag for livecd mode
+	// Security rule: Only allow PCR deferral if PCRs are not already set
+	shouldDeferPCRs := false
+	if req.DeferPCREnrollment {
+		if enrollmentContext.IsNewEnrollment {
+			// New enrollment - allow PCR deferral
+			shouldDeferPCRs = true
+			ca.logger.Info("LiveCD mode: Deferring PCR enrollment for new TPM", "tpmHash", req.TPMHash[:8])
+		} else if enrollmentContext.SealedVolume != nil && enrollmentContext.SealedVolume.Spec.Attestation != nil {
+			// Check if existing PCRs are all empty (re-enrollment mode)
+			allPCRsEmpty := true
+			if enrollmentContext.SealedVolume.Spec.Attestation.PCRValues != nil &&
+				enrollmentContext.SealedVolume.Spec.Attestation.PCRValues.PCRs != nil {
+				for _, pcrValue := range enrollmentContext.SealedVolume.Spec.Attestation.PCRValues.PCRs {
+					if pcrValue != "" {
+						allPCRsEmpty = false
+						break
+					}
+				}
+			}
+
+			if allPCRsEmpty {
+				shouldDeferPCRs = true
+				ca.logger.Info("LiveCD mode: Maintaining deferred PCR enrollment (all PCRs empty)", "tpmHash", req.TPMHash[:8])
+			} else {
+				ca.logger.Info("Security: Ignoring DeferPCREnrollment flag - PCRs already enrolled", "tpmHash", req.TPMHash[:8])
+			}
+		}
+	}
+
+	// If we should defer PCRs, replace actual PCR values with empty strings
+	if shouldDeferPCRs {
+		ca.logger.Info("Setting PCR values to empty strings for deferred enrollment", "originalPCRCount", len(pcrValues.PCRs))
+		for pcrIndex := range pcrValues.PCRs {
+			pcrValues.PCRs[pcrIndex] = ""
+		}
+	}
+
 	// Check if TPM is quarantined
 	if !enrollmentContext.IsNewEnrollment && enrollmentContext.VolumeData != nil && enrollmentContext.VolumeData.Quarantined {
 		ca.logger.Info("TPM is quarantined - rejecting attestation", "tpmHash", req.TPMHash)
@@ -1016,8 +1054,9 @@ func updateAttestationDataSelective(attestation *keyserverv1alpha1.AttestationSp
 
 		for pcrIndex, currentValue := range currentPCRs.PCRs {
 			// Only update if stored value exists AND is empty (re-enrollment mode)
+			// AND the current value is not empty (skip deferred PCR updates)
 			// Omitted PCRs (not in the map) should be skipped entirely per spec
-			if storedValue, exists := attestation.PCRValues.PCRs[pcrIndex]; exists && storedValue == "" {
+			if storedValue, exists := attestation.PCRValues.PCRs[pcrIndex]; exists && storedValue == "" && currentValue != "" {
 				attestation.PCRValues.PCRs[pcrIndex] = currentValue
 				logger.Info("Updated PCR value during selective enrollment", "pcr", pcrIndex)
 				updated = true

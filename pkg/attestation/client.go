@@ -54,6 +54,17 @@ func (c *RemoteAttestationClient) CreateInit() (*AttestationInit, error) {
 	}, nil
 }
 
+// CreateInitDeferredEnrollment creates an AttestationInit with PCR enrollment deferred
+// Used in livecd mode where PCR values will differ after installation
+func (c *RemoteAttestationClient) CreateInitDeferredEnrollment() (*AttestationInit, error) {
+	init, err := c.CreateInit()
+	if err != nil {
+		return nil, err
+	}
+	init.DeferPCREnrollment = true
+	return init, nil
+}
+
 // HandleChallenge takes an AttestationChallenge, activates credential, and returns AttestationProof
 // The client selects PCRs.
 func (c *RemoteAttestationClient) HandleChallenge(challenge *AttestationChallenge, pcrs []int) (*AttestationProof, error) {
