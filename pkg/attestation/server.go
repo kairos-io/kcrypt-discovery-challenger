@@ -19,9 +19,10 @@ import (
 )
 
 type AttestationRequest struct {
-	TPMHash string
-	PCRs    map[int][]byte
-	EKPEM   []byte
+	TPMHash            string
+	PCRs               map[int][]byte
+	EKPEM              []byte
+	DeferPCREnrollment bool
 }
 
 type Attestator interface {
@@ -133,9 +134,10 @@ func (s *RemoteAttestationServer) IssuePassphrase(ctx context.Context, init *Att
 
 	// Build request for Attestator
 	req := AttestationRequest{
-		TPMHash: tpmHash,
-		PCRs:    vr.PCRs,
-		EKPEM:   ekPEM,
+		TPMHash:            tpmHash,
+		PCRs:               vr.PCRs,
+		EKPEM:              ekPEM,
+		DeferPCREnrollment: init.DeferPCREnrollment,
 	}
 	return s.attestator.IssuePassphrase(ctx, req)
 }

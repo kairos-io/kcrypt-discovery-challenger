@@ -69,8 +69,49 @@ kcrypt:
 `, os.Getenv("KMS_ADDRESS"))
 
 		installKairosWithConfig(config)
+
+		// BEFORE REBOOT: Check that PCRs are deferred (empty) in livecd mode
+		By("Verifying SealedVolume and secrets were created during livecd installation")
+		sealedVolumeName := getSealedVolumeName(tpmHash)
+		Eventually(func() bool {
+			return secretExists(fmt.Sprintf("%s-cos-persistent", sealedVolumeName)) &&
+				secretExists(fmt.Sprintf("%s-cos-oem", sealedVolumeName))
+		}, 30*time.Second, 5*time.Second).Should(BeTrue(), "Secrets should be created during livecd installation")
+
+		By("Verifying PCRs are empty (deferred) during livecd mode before reboot")
+		Eventually(func() bool {
+			cmd := exec.Command("kubectl", "get", "sealedvolume", sealedVolumeName, "-o", "yaml")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				return false
+			}
+			outStr := string(out)
+			// Check that attestation exists with EK but PCRs are empty strings
+			return strings.Contains(outStr, "attestation:") &&
+				strings.Contains(outStr, "ekPublicKey:") &&
+				strings.Contains(outStr, "pcrValues:") &&
+				strings.Contains(outStr, "pcrs:") &&
+				strings.Contains(outStr, `"0": ""`) // PCR 0 should be empty string (deferred)
+		}, 30*time.Second, 5*time.Second).Should(BeTrue(), "PCRs should be deferred (empty strings) during livecd mode")
+
+		// NOW REBOOT to installed system
 		rebootAndConnect(testVM)
 		verifyEncryptedPartition(testVM)
+
+		// AFTER REBOOT: Check that PCRs are now enrolled (non-empty)
+		By("Verifying PCRs are enrolled (non-empty) after reboot to installed system")
+		Eventually(func() bool {
+			cmd := exec.Command("kubectl", "get", "sealedvolume", sealedVolumeName, "-o", "yaml")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				return false
+			}
+			outStr := string(out)
+			// PCR 0 should now have a non-empty value
+			return strings.Contains(outStr, "pcrValues:") &&
+				strings.Contains(outStr, `"0":`) &&
+				!strings.Contains(outStr, `"0": ""`) // PCR 0 should NOT be empty anymore
+		}, 30*time.Second, 5*time.Second).Should(BeTrue(), "PCRs should be enrolled after reboot to installed system")
 
 		// Verify both partitions are encrypted
 		By("Verifying both partitions are encrypted")
@@ -78,27 +119,6 @@ kcrypt:
 		Expect(err).ToNot(HaveOccurred(), out)
 		Expect(out).To(MatchRegexp("TYPE=\"crypto_LUKS\" PARTLABEL=\"persistent\""), out)
 		Expect(out).To(MatchRegexp("TYPE=\"crypto_LUKS\" PARTLABEL=\"oem\""), out)
-
-		By("Verifying SealedVolume was auto-created with attestation data")
-		Eventually(func() bool {
-			sealedVolumeName := getSealedVolumeName(tpmHash)
-			cmd := exec.Command("kubectl", "get", "sealedvolume", sealedVolumeName, "-o", "yaml")
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				return false
-			}
-			// Check that attestation data was populated (not empty)
-			// Note: Using transient AK approach, only EK is stored
-			return strings.Contains(string(out), "attestation:") &&
-				strings.Contains(string(out), "ekPublicKey:")
-		}, 30*time.Second, 5*time.Second).Should(BeTrue())
-
-		By("Verifying encryption secrets were auto-generated for both partitions")
-		Eventually(func() bool {
-			sealedVolumeName := getSealedVolumeName(tpmHash)
-			return secretExists(fmt.Sprintf("%s-cos-persistent", sealedVolumeName)) &&
-				secretExists(fmt.Sprintf("%s-cos-oem", sealedVolumeName))
-		}, 30*time.Second, 5*time.Second).Should(BeTrue())
 
 		By("Testing subsequent authentication with learned attestation data")
 		rebootAndConnect(testVM)
@@ -154,7 +174,7 @@ kcrypt:
 		expectPassphraseRetrieval(testVM, "COS_PERSISTENT", true)
 
 		By("Verifying EK was re-enrolled with actual value")
-		sealedVolumeName := getSealedVolumeName(tpmHash)
+		sealedVolumeName = getSealedVolumeName(tpmHash)
 		var learnedEK string
 		Eventually(func() bool {
 			cmd := exec.Command("kubectl", "get", "sealedvolume", sealedVolumeName, "-o", "jsonpath={.spec.attestation.ekPublicKey}")

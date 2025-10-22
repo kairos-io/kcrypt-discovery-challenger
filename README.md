@@ -120,7 +120,9 @@ $ helm install kairos-challenger kairos/kcrypt-challenger
 
 ## Remote Attestation Flow
 
-The kcrypt-challenger implements a secure TPM-based remote attestation flow for disk encryption key management. The following diagram illustrates the complete attestation process:
+The kcrypt-challenger implements a secure TPM-based remote attestation flow for disk encryption key management. The system includes special handling for LiveCD mode to support installation scenarios where PCR values differ between the installation media and the installed system.
+
+The following diagram illustrates the complete attestation process:
 
 ```mermaid
 sequenceDiagram
@@ -134,12 +136,13 @@ sequenceDiagram
     Client->>TPM: Generate Transient AK (Ephemeral Attestation Key)
     Client->>TPM: Read PCR Values (Boot State)
 
-    Note over Client,Challenger: 1. Connection Establishment
+    Note over Client,Challenger: 1. Connection Establishment & Boot State Detection
+    Client->>Client: Detect boot state via kairos-sdk<br/>(LiveCD, Active, Passive, Recovery)
     Client->>Challenger: WebSocket connection with partition info<br/>(label, device, UUID)
     Challenger->>Client: Connection established
 
     Note over Client,Challenger: 2. TPM Authentication (Challenge-Response)
-    Client->>Challenger: Send EK + Transient AK attestation data
+    Client->>Challenger: Send EK + Transient AK attestation data<br/>+ DeferPCREnrollment flag (if LiveCD)
     Challenger->>Challenger: Decode EK/AK, compute TPM hash
     Challenger->>Challenger: Generate cryptographic challenge
     Challenger->>Client: Send challenge (encrypted with EK)
@@ -157,7 +160,11 @@ sequenceDiagram
         Challenger->>Challenger: Skip attestation verification (TOFU)
         Challenger->>Challenger: Generate secure passphrase
         Challenger->>K8s: Create/reuse Kubernetes Secret
-        Challenger->>Challenger: Create attestation spec (store ALL PCRs)
+        alt LiveCD Mode (DeferPCREnrollment=true)
+            Challenger->>Challenger: Create attestation spec with empty PCR values<br/>(defer enrollment until after installation)
+        else Normal Boot Mode
+            Challenger->>Challenger: Create attestation spec (store ALL PCRs)
+        end
         Challenger->>K8s: Create SealedVolume with attestation data
         K8s->>Challenger: Confirm resource creation
     else Existing Enrollment
@@ -202,13 +209,45 @@ The kcrypt-challenger now uses a **transient AK approach** that eliminates the n
 
 ### Flow Explanation
 
-1. **Connection Establishment**: Client establishes WebSocket connection with partition metadata
+1. **Boot State Detection & Connection**: Client detects boot state (LiveCD vs normal boot) and establishes WebSocket connection with partition metadata
 2. **TPM Authentication**: Cryptographic challenge-response proves client controls the TPM hardware
 3. **Enrollment Determination**: Server checks if this TPM is already enrolled
 4. **Security Verification**:
    - **TOFU**: New TPMs are automatically enrolled (Trust On First Use)
+   - **LiveCD Mode**: PCR enrollment is deferred (empty values) for later enrollment after installation
    - **Selective Enrollment**: Existing TPMs undergo flexible verification based on field states
 5. **Passphrase Delivery**: Encrypted disk passphrase is securely delivered to authenticated client
+
+### LiveCD Mode PCR Deferral
+
+During system installation from LiveCD media, PCR values may differ from the final installed system (especially when using `--source` flag to install a different image). To handle this scenario:
+
+**During Installation (LiveCD Mode)**:
+- Client detects LiveCD boot state using `kairos-sdk/state.NewRuntime()`
+- Sends `DeferPCREnrollment: true` flag to server
+- Server creates SealedVolume with:
+  - ✅ TPM hash enrolled (computed from EK)
+  - ✅ EK public key enrolled
+  - ⏸️ PCR values set to empty strings (deferred for later enrollment)
+- Passphrase is delivered successfully for installation to proceed
+
+**After Installation (First Normal Boot)**:
+- Client detects normal boot state (Active/Passive, not LiveCD)
+- Sends `DeferPCREnrollment: false`
+- Server sees PCRs are empty (re-enrollment mode)
+- Server updates empty PCRs with actual current values
+- PCRs are now enrolled and enforced going forward
+
+**Security Measure**:
+- Once PCRs are enrolled (non-empty), the `DeferPCREnrollment` flag is ignored
+- Prevents attackers from bypassing PCR verification by faking LiveCD mode
+- System must boot correctly with matching PCRs to decrypt
+
+**Boot State Detection**:
+The client uses `kairos-sdk/state.NewRuntime()` which detects LiveCD boot by examining:
+- `/proc/cmdline` for: `live:LABEL`, `live:CDLABEL`, or `netboot`
+- EFI variables for UKI boot scenarios
+- This is the same detection used by `kairos-agent state get boot` command
 
 ### Selective Enrollment States
 

@@ -595,7 +595,7 @@ func runInfo(pcrsFlag string) error {
 	// Display the information
 	fmt.Printf("TPM Enrollment Information\n")
 	fmt.Printf("==========================\n\n")
-	
+
 	fmt.Printf("TPM Hash:\n")
 	fmt.Printf("  %s\n\n", tpmHash)
 
@@ -624,36 +624,36 @@ func parsePCRList(pcrsStr string) ([]int, error) {
 
 	parts := strings.Split(pcrsStr, ",")
 	pcrSet := make(map[int]bool) // Use map to ensure uniqueness
-	
+
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
-		
+
 		var pcrIndex int
 		if _, err := fmt.Sscanf(part, "%d", &pcrIndex); err != nil {
 			return nil, fmt.Errorf("invalid PCR index '%s': %w", part, err)
 		}
-		
+
 		if pcrIndex < 0 || pcrIndex > 23 {
 			return nil, fmt.Errorf("PCR index %d is out of range (0-23)", pcrIndex)
 		}
-		
+
 		pcrSet[pcrIndex] = true
 	}
-	
+
 	if len(pcrSet) == 0 {
 		return nil, fmt.Errorf("no valid PCR indices found")
 	}
-	
+
 	// Convert map to sorted slice
 	pcrIndices := make([]int, 0, len(pcrSet))
 	for pcrIndex := range pcrSet {
 		pcrIndices = append(pcrIndices, pcrIndex)
 	}
 	sort.Ints(pcrIndices)
-	
+
 	return pcrIndices, nil
 }
 

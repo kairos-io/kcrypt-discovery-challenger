@@ -17,17 +17,22 @@ Server (kcrypt-challenger):
 3) VerifyProof (secret + PCR quote signature verification + PCR consistency verification) → proceed with selective enrollment and passphrase release
 
 ### Wire Messages (owned by this package)
-- AttestationInit: EK (PEM/DER), AK AttestationParameters, optional AK public
+- AttestationInit: EK (PEM/DER), AK AttestationParameters, optional AK public, DeferPCREnrollment flag (for LiveCD mode)
 - AttestationChallenge: EncryptedCredential (no PCRs)
 - AttestationProof: Secret (credential activation), PCRQuote (JSON with quote + selected PCR values)
 
 ### Client API
 - NewRemoteAttestationClient(opts ...tpm.Option) (*RemoteAttestationClient, error)
 - Close() error
-- CreateInit() ([]byte, error)
-- HandleChallenge(challengeBytes []byte) ([]byte, error)
+- CreateInit() (*AttestationInit, error)
+- CreateInitDeferredEnrollment() (*AttestationInit, error)  // For LiveCD mode
+- HandleChallenge(challenge *AttestationChallenge, pcrs []int) (*AttestationProof, error)
 
 Internally, the client uses transient AKs (no persistent AK storage). It sends EK + AK attestation data in AttestationInit, and later returns the secret and PCR quote in AttestationProof.
+
+**LiveCD Mode Support:**
+- `CreateInit()`: Normal enrollment - PCRs will be enrolled with current values
+- `CreateInitDeferredEnrollment()`: LiveCD mode - sets `DeferPCREnrollment: true`, PCRs stored as empty strings for later enrollment after installation
 
 ### Server API
 - NewRemoteAttestationServer(attestator Attestator) *RemoteAttestationServer
@@ -86,9 +91,10 @@ type Attestator interface {
 }
 
 type AttestationRequest struct {
-    TPMHash string            // derived from EK (server-enrolled identity)
-    PCRs    map[int][]byte    // client-selected PCRs from verified quote
-    EKPEM   []byte            // optional: EK in PEM/DER for auditing/forensics
+    TPMHash            string            // derived from EK (server-enrolled identity)
+    PCRs               map[int][]byte    // client-selected PCRs from verified quote
+    EKPEM              []byte            // optional: EK in PEM/DER for auditing/forensics
+    DeferPCREnrollment bool              // LiveCD mode: defer PCR enrollment (store as empty strings)
     // Optional: partition/volume metadata for policy, if the consumer passes it through
 }
 ```
