@@ -1,19 +1,12 @@
 package client
 
 import (
-	"github.com/kairos-io/kairos-sdk/collector"
-	"gopkg.in/yaml.v3"
+	"github.com/kairos-io/kairos-sdk/types"
 )
-
-// There are the directories under which we expect to find kairos configuration.
-// When we are booted from an iso (during installation), configuration is expected
-// under `/oem`. When we are booting an installed system (in initramfs phase),
-// the path is `/sysroot/oem`.
-// When we run the challenger in hooks, we may have the config under /tmp/oem
-var confScanDirs = []string{"/oem", "/sysroot/oem", "/tmp/oem"}
 
 type Client struct {
 	Config Config
+	Logger types.KairosLogger
 }
 
 type Config struct {
@@ -29,26 +22,8 @@ type Config struct {
 	}
 }
 
-func unmarshalConfig() (Config, error) {
-	var result Config
-
-	o := &collector.Options{NoLogs: true, MergeBootCMDLine: false}
-	if err := o.Apply(collector.Directories(confScanDirs...)); err != nil {
-		return result, err
-	}
-
-	c, err := collector.Scan(o, func(d []byte) ([]byte, error) {
-		return d, nil
-	})
-	if err != nil {
-		return result, err
-	}
-
-	a, _ := c.String()
-	err = yaml.Unmarshal([]byte(a), &result)
-	if err != nil {
-		return result, err
-	}
-
-	return result, nil
+// newEmptyConfig returns an empty config
+// The actual config is now passed via the DiscoveryPasswordPayload JSON from the caller
+func newEmptyConfig() Config {
+	return Config{}
 }
