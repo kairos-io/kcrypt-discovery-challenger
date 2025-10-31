@@ -2,8 +2,6 @@ module github.com/kairos-io/kairos-challenger
 
 go 1.25
 
-replace github.com/kairos-io/tpm-helpers => github.com/kairos-io/tpm-helpers v0.0.0-20251002141416-c1a8f4118cdc
-
 //replace github.com/kairos-io/tpm-helpers => /home/dimitris/workspace/kairos/tpm-helpers
 
 require (
@@ -15,7 +13,7 @@ require (
 	github.com/hashicorp/mdns v1.0.6
 	github.com/jaypipes/ghw v0.19.1
 	github.com/kairos-io/kairos-sdk v0.11.1-0.20251017100730-afc293496b30
-	github.com/kairos-io/tpm-helpers v0.0.0-20250917111550-e914e08a09c2
+	github.com/kairos-io/tpm-helpers v0.0.0-20251031091328-e6e1a809bc0f
 	github.com/mudler/go-pluggable v0.0.0-20230126220627-7710299a0ae5
 	github.com/mudler/go-processmanager v0.0.0-20240820160718-8b802d3ecf82
 	github.com/mudler/yip v1.18.1
