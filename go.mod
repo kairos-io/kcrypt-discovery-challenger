@@ -7,7 +7,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/mdns v1.0.6
-	github.com/jaypipes/ghw v0.19.1
+	github.com/jaypipes/ghw v0.20.0
 	github.com/kairos-io/kairos-sdk v0.12.0
 	github.com/kairos-io/tpm-helpers v0.0.0-20250917111550-e914e08a09c2
 	github.com/mudler/go-pluggable v0.0.0-20230126220627-7710299a0ae5
