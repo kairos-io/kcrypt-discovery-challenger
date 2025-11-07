@@ -296,6 +296,8 @@ github.com/google/gnostic v0.5.7-v3refs/go.mod h1:73MKFl6jIHelAJNaBGFzt3SPtZULs9
 github.com/google/go-attestation v0.3.2/go.mod h1:N0ADdnY0cr7eLJyZ75o8kofGGTUF2XrZTJuTPo5acwk=
 github.com/google/go-attestation v0.4.4-0.20220404204839-8820d49b18d9 h1:uspQ6yStR6DVxLT7UomcSc/cKEOtM3z6MOslXeXH1Gg=
 github.com/google/go-attestation v0.4.4-0.20220404204839-8820d49b18d9/go.mod h1:KDsPHk8a2MX9g20kYSdxB21t7je5NghSaFeVn0Zu3Ao=
+github.com/google/go-attestation v0.5.1 h1:jqtOrLk5MNdliTKjPbIPrAaRKJaKW+0LIU2n/brJYms=
+github.com/google/go-attestation v0.5.1/go.mod h1:KqGatdUhg5kPFkokyzSBDxwSCFyRgIgtRkMp6c3lOBQ=
 github.com/google/go-cmp v0.2.0/go.mod h1:oXzfMopK8JAjlY9xF4vHSVASa0yLyX7SntLO5aqRK0M=
 github.com/google/go-cmp v0.3.0/go.mod h1:8QqcDgzrUqlUb/G2PQTWiueGozuR1884gddMywk6iLU=
 github.com/google/go-cmp v0.3.1/go.mod h1:8QqcDgzrUqlUb/G2PQTWiueGozuR1884gddMywk6iLU=
@@ -320,12 +322,16 @@ github.com/google/go-tpm v0.3.0/go.mod h1:iVLWvrPp/bHeEkxTFi9WG6K9w0iy2yIszHwZGH
 github.com/google/go-tpm v0.3.2/go.mod h1:j71sMBTfp3X5jPHz852ZOfQMUOf65Gb/Th8pRmp7fvg=
 github.com/google/go-tpm v0.3.3 h1:P/ZFNBZYXRxc+z7i5uyd8VP7MaDteuLZInzrH2idRGo=
 github.com/google/go-tpm v0.3.3/go.mod h1:9Hyn3rgnzWF9XBWVk6ml6A6hNkbWjNFlDQL51BeghL4=
+github.com/google/go-tpm v0.9.1 h1:0pGc4X//bAlmZzMKf8iz6IsDo1nYTbYJ6FZN/rg4zdM=
+github.com/google/go-tpm v0.9.1/go.mod h1:h9jEsEECg7gtLis0upRBQU+GhYVH6jMjrFxI8u6bVUY=
 github.com/google/go-tpm-tools v0.0.0-20190906225433-1614c142f845/go.mod h1:AVfHadzbdzHo54inR2x1v640jdi1YSi3NauM2DUsxk0=
 github.com/google/go-tpm-tools v0.2.0/go.mod h1:npUd03rQ60lxN7tzeBJreG38RvWwme2N1reF/eeiBk4=
 github.com/google/go-tpm-tools v0.2.1/go.mod h1:npUd03rQ60lxN7tzeBJreG38RvWwme2N1reF/eeiBk4=
 github.com/google/go-tpm-tools v0.3.1/go.mod h1:PSg+r5hSZI5tP3X7LBQx2sW1VSZUqZHBSrKyDqrB21U=
 github.com/google/go-tpm-tools v0.3.10 h1:hz9EoyG4Ewa0leT3OvxlWprq14Lw0RBmfFcH9H9+Yas=
 github.com/google/go-tpm-tools v0.3.10/go.mod h1:HQfQboO+M8pRtBfO5U3KMhwzfC/XC3TaMCgRfTpII8Q=
+github.com/google/go-tpm-tools v0.4.4 h1:oiQfAIkc6xTy9Fl5NKTeTJkBTlXdHsxAofmQyxBKY98=
+github.com/google/go-tpm-tools v0.4.4/go.mod h1:T8jXkp2s+eltnCDIsXR84/MTcVU9Ja7bh3Mit0pa4AY=
 github.com/google/go-tspi v0.2.1-0.20190423175329-115dea689aad/go.mod h1:xfMGI3G0PhxCdNVcYr1C4C+EizojDg/TXuX5by8CiHI=
 github.com/google/go-tspi v0.3.0 h1:ADtq8RKfP+jrTyIWIZDIYcKOMecRqNJFOew2IT0Inus=
 github.com/google/go-tspi v0.3.0/go.mod h1:xfMGI3G0PhxCdNVcYr1C4C+EizojDg/TXuX5by8CiHI=
@@ -463,6 +469,8 @@ github.com/kairos-io/tpm-helpers v0.0.0-20240123063624-f7a3fcc66199 h1:eXiZNiQfZ
 github.com/kairos-io/tpm-helpers v0.0.0-20240123063624-f7a3fcc66199/go.mod h1:6YGebKVrPoJGBd9QE+x4zyuo3vPw1y33iQkNChjlBo8=
 github.com/kairos-io/tpm-helpers v0.0.0-20250917111550-e914e08a09c2 h1:mhpOv6cv4vGxcjot3jq/rEQOQbcS5w/n7XlNhdEx/1Y=
 github.com/kairos-io/tpm-helpers v0.0.0-20250917111550-e914e08a09c2/go.mod h1:TvR2vGOuB5qXCyXUqXA4EJLFW5XOW5HvPOvD2SLJ5Wg=
+github.com/kairos-io/tpm-helpers v0.0.0-20251107132133-df566ad2d185 h1:XSUSjYFkIFdZhFEc3Z6xcqggbgPOclKz+9hntaA+q8o=
+github.com/kairos-io/tpm-helpers v0.0.0-20251107132133-df566ad2d185/go.mod h1:zOtMRZ4zGpy+qL6W1N0LrczM/9T0sdoaJ1K5PgfchAs=
 github.com/kisielk/errcheck v1.1.0/go.mod h1:EZBBE59ingxPouuu3KfxchcWSUPOHkagtvWXihfKN4Q=
 github.com/kisielk/errcheck v1.2.0/go.mod h1:/BMXB+zMLi60iA8Vv6Ksmxu/1UDYcXs4uQLJ+jE2L00=
 github.com/kisielk/errcheck v1.5.0/go.mod h1:pFxgyoBC7bSaBwPgfKdkLd5X25qrDl4LWUI2bnpBCr8=
@@ -840,6 +848,8 @@ go.uber.org/multierr v1.5.0/go.mod h1:FeouvMocqHpRaaGuG9EjoKcStLC43Zu/fmqdUMPcKY
 go.uber.org/multierr v1.6.0/go.mod h1:cdWPpRnG4AhwMwsgIHip0KRBQjJy5kYEpYjJxpXp9iU=
 go.uber.org/multierr v1.9.0 h1:7fIwc/ZtS0q++VgcfqFDxSBZVv/Xo49/SYnDFupUwlI=
 go.uber.org/multierr v1.9.0/go.mod h1:X2jQV1h+kxSjClGpnseKVIxpmcjrj7MNnI0bnlfKTVQ=
+go.uber.org/multierr v1.11.0 h1:blXXJkSxSSfBVBlC76pxqeO+LN3aDfLQo+309xJstO0=
+go.uber.org/multierr v1.11.0/go.mod h1:20+QtiLqy0Nd6FdQB9TLXag12DsQkrbs3htMFfDN80Y=
 go.uber.org/tools v0.0.0-20190618225709-2cfd321de3ee/go.mod h1:vJERXedbb3MVM5f9Ejo0C68/HhF8uaILCdgjnY+goOA=
 go.uber.org/zap v1.10.0/go.mod h1:vwi/ZaCAaUcBkycHslxD9B2zi4UTXhF60s6SWpuDF0Q=
 go.uber.org/zap v1.13.0/go.mod h1:zwrFLgMcdUuIBviXEYEH1YKNaOBnKXsx2IPda5bBwHM=

@@ -9,7 +9,7 @@ require (
 	github.com/hashicorp/mdns v1.0.6
 	github.com/jaypipes/ghw v0.20.0
 	github.com/kairos-io/kairos-sdk v0.12.0
-	github.com/kairos-io/tpm-helpers v0.0.0-20250917111550-e914e08a09c2
+	github.com/kairos-io/tpm-helpers v0.0.0-20251107132133-df566ad2d185
 	github.com/mudler/go-pluggable v0.0.0-20230126220627-7710299a0ae5
 	github.com/mudler/go-processmanager v0.0.0-20240820160718-8b802d3ecf82
 	github.com/mudler/yip v1.18.1
@@ -79,11 +79,11 @@ require (
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/certificate-transparency-go v1.1.4 // indirect
 	github.com/google/gnostic v0.5.7-v3refs // indirect
-	github.com/google/go-attestation v0.4.4-0.20220404204839-8820d49b18d9 // indirect
+	github.com/google/go-attestation v0.5.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-containerregistry v0.20.6 // indirect
-	github.com/google/go-tpm v0.3.3 // indirect
-	github.com/google/go-tpm-tools v0.3.10 // indirect
+	github.com/google/go-tpm v0.9.1 // indirect
+	github.com/google/go-tpm-tools v0.4.4 // indirect
 	github.com/google/go-tspi v0.3.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/google/pprof v0.0.0-20250403155104-27863c87afa6 // indirect
@@ -153,7 +153,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.36.0 // indirect
 	go.uber.org/atomic v1.10.0 // indirect
 	go.uber.org/automaxprocs v1.6.0 // indirect
-	go.uber.org/multierr v1.9.0 // indirect
+	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.42.0 // indirect
