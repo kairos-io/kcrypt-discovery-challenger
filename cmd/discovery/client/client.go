@@ -64,9 +64,14 @@ func (c *Client) Start(eventType pluggable.EventType) error {
 			c.Logger.Debugf("Using ChallengerServer from payload: %s", payload.ChallengerServer)
 			c.Config.Kcrypt.Challenger.Server = payload.ChallengerServer
 		}
+		// Note: payload.MDNS is a bool, so we can't distinguish between "not set" and "false"
+		// If payload has MDNS=true, use it. Otherwise, keep the collector's value.
+		// The collector's value should already be set from LoadConfigFromCollector above.
 		if payload.MDNS {
 			c.Logger.Debugf("Using MDNS from payload: %t", payload.MDNS)
 			c.Config.Kcrypt.Challenger.MDNS = payload.MDNS
+		} else {
+			c.Logger.Debugf("Payload MDNS not set or false, using collector value: %t", c.Config.Kcrypt.Challenger.MDNS)
 		}
 
 		c.Logger.Debugf("Final config: TPMDevice=%s, Server=%s, MDNS=%t",
@@ -100,10 +105,14 @@ func (c *Client) GetPassphrase(partition *types.Partition, attempts int) (string
 	additionalHeaders := map[string]string{}
 	var err error
 	if c.Config.Kcrypt.Challenger.MDNS {
+		c.Logger.Debugf("MDNS is enabled, attempting mDNS resolution for: %s", serverURL)
 		serverURL, additionalHeaders, err = queryMDNS(serverURL, c.Logger)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("mDNS resolution failed: %w", err)
 		}
+		c.Logger.Debugf("mDNS resolution completed, using server URL: %s", serverURL)
+	} else {
+		c.Logger.Debugf("MDNS is disabled (MDNS=%t), skipping mDNS resolution", c.Config.Kcrypt.Challenger.MDNS)
 	}
 
 	c.Logger.Debugf("Starting TPM attestation flow with server: %s", serverURL)

@@ -45,14 +45,20 @@ func LoadConfigFromCollector(logger types.KairosLogger) Config {
 	if kcryptConfig.ChallengerServer != "" {
 		conf.Kcrypt.Challenger.Server = kcryptConfig.ChallengerServer
 	}
+	// MDNS is a bool, so check if it's true (explicitly set to true in config)
 	if kcryptConfig.MDNS {
 		conf.Kcrypt.Challenger.MDNS = kcryptConfig.MDNS
+		logger.Debugf("Loaded MDNS from collector: %t", conf.Kcrypt.Challenger.MDNS)
+	} else {
+		logger.Debugf("MDNS not set in collector config (value: %t), defaulting to false", kcryptConfig.MDNS)
+		conf.Kcrypt.Challenger.MDNS = false
 	}
 	if kcryptConfig.Certificate != "" {
 		conf.Kcrypt.Challenger.Certificate = kcryptConfig.Certificate
 	}
 
-	logger.Debugf("Loaded config from collector: TPMDevice=%s", conf.Kcrypt.TPMDevice)
+	logger.Debugf("Loaded config from collector: TPMDevice=%s, Server=%s, MDNS=%t",
+		conf.Kcrypt.TPMDevice, conf.Kcrypt.Challenger.Server, conf.Kcrypt.Challenger.MDNS)
 
 	return conf
 }

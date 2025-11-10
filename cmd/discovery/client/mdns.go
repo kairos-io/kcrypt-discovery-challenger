@@ -21,7 +21,6 @@ const (
 // If a response is received, the IP address and port from the response will be returned// and an additional "Host" header pointing to the original host.
 func queryMDNS(originalURL string, logger types.KairosLogger) (string, map[string]string, error) {
 	additionalHeaders := map[string]string{}
-	var err error
 
 	parsedURL, err := url.Parse(originalURL)
 	if err != nil {
@@ -29,28 +28,40 @@ func queryMDNS(originalURL string, logger types.KairosLogger) (string, map[strin
 	}
 
 	host := parsedURL.Host
-	if !strings.HasSuffix(host, ".local") { // sanity check
+	// Extract hostname without port for .local check
+	hostname := host
+	if hostPort := strings.Split(host, ":"); len(hostPort) > 1 {
+		hostname = hostPort[0]
+	}
+	if !strings.HasSuffix(hostname, ".local") { // sanity check
 		return "", additionalHeaders, fmt.Errorf("domain should end in \".local\" when using mdns")
 	}
 
-	mdnsIP, mdnsPort := discoverMDNSServer(host, logger)
+	mdnsIP, mdnsPort := discoverMDNSServer(hostname, logger)
 	if mdnsIP == "" { // no reply
-		logger.Debugf("no reply from mdns")
-		return originalURL, additionalHeaders, nil
+		logger.Debugf("no reply from mdns after %v timeout", MDNSTimeout)
+		// For .local domains, mDNS is required - don't fall back to DNS
+		return "", additionalHeaders, fmt.Errorf("mDNS resolution failed: no mDNS server found for %s (searched for service type %s)", hostname, MDNSServiceType)
 	}
 
-	additionalHeaders["Host"] = parsedURL.Host
-	newURL := strings.ReplaceAll(originalURL, host, mdnsIP)
-	// Remove any port in the original url
-	if port := parsedURL.Port(); port != "" {
-		newURL = strings.ReplaceAll(newURL, port, "")
-	}
+	// Set Host header to original hostname (for virtual hosting)
+	additionalHeaders["Host"] = host
 
-	// Add any possible port from the mdns response
+	// Build new URL with discovered IP address
+	// Use the port from mDNS response if available, otherwise use original port
+	newHost := mdnsIP
 	if mdnsPort != "" {
-		newURL = strings.ReplaceAll(newURL, mdnsIP, fmt.Sprintf("%s:%s", mdnsIP, mdnsPort))
+		newHost = fmt.Sprintf("%s:%s", mdnsIP, mdnsPort)
+	} else if parsedURL.Port() != "" {
+		// If mDNS didn't provide a port, keep the original port
+		newHost = fmt.Sprintf("%s:%s", mdnsIP, parsedURL.Port())
 	}
 
+	// Reconstruct URL with new host
+	parsedURL.Host = newHost
+	newURL := parsedURL.String()
+
+	logger.Debugf("mDNS resolved %s to %s", originalURL, newURL)
 	return newURL, additionalHeaders, nil
 }
 
