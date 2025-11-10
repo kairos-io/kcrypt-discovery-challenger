@@ -26,6 +26,9 @@ jobs:
       - name: Build ISO
         run: |
           make kairos-iso
+        env:
+          IMMUCORE_REF: main
+          KAIROS_AGENT_REF: main
       - uses: actions/upload-artifact@v5
         with:
           name: challenger.iso.zip

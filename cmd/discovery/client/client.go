@@ -38,9 +38,13 @@ func (c *Client) Start(eventType pluggable.EventType) error {
 			}
 		}
 
+		// Log the received payload for debugging
+		c.Logger.Debugf("Received payload: Data=%s, Partition=%v, ChallengerServer=%s, MDNS=%t",
+			e.Data, payload.Partition != nil, payload.ChallengerServer, payload.MDNS)
+
 		if payload.Partition == nil {
 			return pluggable.EventResponse{
-				Error: "partition is required in payload",
+				Error: fmt.Sprintf("partition is required in payload. Received payload data: %s", e.Data),
 			}
 		}
 
