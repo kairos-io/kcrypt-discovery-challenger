@@ -23,8 +23,6 @@ jobs:
         with:
           fetch-depth: 0
       - name: Run yamllint
-        uses: cytopia/yamllint@v2
-        with:
-          file_or_dir: .github/workflows/
-          config_file: .yamllint
-          fail_on_error: true
+        run: |
+          pip install yamllint
+          yamllint -c .yamllint .github/workflows/
