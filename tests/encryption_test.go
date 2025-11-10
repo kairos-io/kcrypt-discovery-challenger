@@ -74,7 +74,9 @@ var _ = Describe("kcrypt encryption", Label("encryption-tests"), func() {
 		Expect(err).ToNot(HaveOccurred())
 	})
 
-	When("discovering KMS with mdns", Label("discoverable-kms"), func() {
+	// TODO: Use bridge networking because the default qemu networking won't cut it.
+	// The mdns response can't reach the VM.
+	XWhen("discovering KMS with mdns", Label("discoverable-kms"), func() {
 		var tpmHash string
 		var mdnsHostname string
 
@@ -129,9 +131,6 @@ kcrypt:
 		})
 
 		It("discovers the KMS using mdns", func() {
-			// TODO: Use bridge networking because the default qemu networking won't cut it
-			Skip("need proper networking in order for the mdns response to reach to the mdns client")
-
 			By("rebooting")
 			vm.Reboot()
 			By("checking that we can connect after installation")
