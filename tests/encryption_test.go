@@ -46,9 +46,11 @@ var _ = Describe("kcrypt encryption", Label("encryption-tests"), func() {
 		err = os.WriteFile(configFile.Name(), []byte(config), 0744)
 		Expect(err).ToNot(HaveOccurred())
 
+		By("Copying the config in the VM")
 		err = vm.Scp(configFile.Name(), "config.yaml", "0744")
 		Expect(err).ToNot(HaveOccurred())
 
+		By("starting the installation")
 		installationOutput, err = vm.Sudo("/bin/bash -c 'set -o pipefail && kairos-agent manual-install --device auto config.yaml 2>&1 | tee manual-install.txt'")
 		if expectedInstallationSuccess {
 			Expect(err).ToNot(HaveOccurred(), installationOutput)
@@ -84,6 +86,17 @@ var _ = Describe("kcrypt encryption", Label("encryption-tests"), func() {
 
 			By("deploying simple-mdns-server vm")
 			mdnsVM = deploySimpleMDNSServer(mdnsHostname)
+			By("continuing")
+
+			// Ensure mdnsVM is cleaned up even if test fails
+			DeferCleanup(func() {
+				if mdnsVM.StateDir != "" {
+					err := mdnsVM.Destroy(func(vm VM) {})
+					if err != nil {
+						fmt.Printf("Warning: Failed to cleanup mdnsVM: %v\n", err)
+					}
+				}
+			})
 
 			config = fmt.Sprintf(`#cloud-config
 
@@ -113,13 +126,11 @@ kcrypt:
 			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
 			out, err := cmd.CombinedOutput()
 			Expect(err).ToNot(HaveOccurred(), out)
-
-			err = mdnsVM.Destroy(func(vm VM) {})
-			Expect(err).ToNot(HaveOccurred())
 		})
 
 		It("discovers the KMS using mdns", func() {
-			Skip("TODO: make this test work")
+			// TODO: Use bridge networking because the default qemu networking won't cut it
+			Skip("need proper networking in order for the mdns response to reach to the mdns client")
 
 			By("rebooting")
 			vm.Reboot()
@@ -469,18 +480,39 @@ func deploySimpleMDNSServer(hostname string) VM {
 	opts.Memory = "2000"
 	opts.CPUS = "1"
 	opts.EmulateTPM = false
+	By("starting the VM for the mdns server")
 	_, vm := startVM(opts)
 	vm.EventuallyConnects(1200)
 
+	By("downloading the simple-mdns-server release")
 	out, err := vm.Sudo(`curl -s https://api.github.com/repos/kairos-io/simple-mdns-server/releases/latest | jq -r .assets[].browser_download_url | grep $(uname -m) | xargs curl -L -o sms.tar.gz`)
 	Expect(err).ToNot(HaveOccurred(), string(out))
 
+	By("extracting the binary")
 	out, err = vm.Sudo("tar xvf sms.tar.gz")
 	Expect(err).ToNot(HaveOccurred(), string(out))
 
+	// Stop, disable, and mask avahi-daemon to free up port 5353 for simple-mdns-server
+	// Masking prevents it from being started even if something tries to enable it
+	By("stopping avahi-daemon services")
+	out, err = vm.Sudo("systemctl stop avahi-daemon.service avahi-daemon.socket 2>/dev/null || true")
+	Expect(err).ToNot(HaveOccurred(), string(out))
+	out, err = vm.Sudo("systemctl disable avahi-daemon.service avahi-daemon.socket 2>/dev/null || true")
+	Expect(err).ToNot(HaveOccurred(), string(out))
+	out, err = vm.Sudo("systemctl mask avahi-daemon.service avahi-daemon.socket 2>/dev/null || true")
+	Expect(err).ToNot(HaveOccurred(), string(out))
+
+	// Verify avahi-daemon is stopped and port 5353 is free
+	By("cheking if port 5353 is free")
+	out, err = vm.Sudo("systemctl is-active avahi-daemon.service avahi-daemon.socket 2>&1 || true")
+	Expect(err).ToNot(HaveOccurred(), string(out))
+	out, err = vm.Sudo("ss -ulnp | grep :5353 || echo 'Port 5353 is free'")
+	Expect(err).ToNot(HaveOccurred(), string(out))
+
 	// Start the simple-mdns-server in the background
+	By("starting the simple-mdns-server")
 	out, err = vm.Sudo(fmt.Sprintf(
-		"/bin/bash -c './simple-mdns-server --port 80 --address 10.0.2.2 --serviceType _kcrypt._tcp --hostName %s &'", hostname))
+		"nohup ./simple-mdns-server --port 80 --address 10.0.2.2 --serviceType _kcrypt._tcp --hostName %s > /dev/null 2>&1 &", hostname))
 	Expect(err).ToNot(HaveOccurred(), string(out))
 
 	return vm

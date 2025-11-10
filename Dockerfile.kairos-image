@@ -96,7 +96,16 @@ RUN /kairos-init -l debug -m "generic" -t "false" -s "install" --version "${KAIR
 
 # STAGE 1.5: Install additional packages needed for UKI network setup
 # Install dhcpcd for temporary DHCP during early boot (for remote KMS access)
+# Install avahi-tools for debugging discoverable-kms test
 RUN dnf install -y dhcpcd && dnf clean all
+
+# Disable and mask avahi-daemon to prevent port 5353 conflicts with simple-mdns-server
+RUN systemctl disable avahi-daemon.service avahi-daemon.socket 2>/dev/null || true && \
+    systemctl mask avahi-daemon.service avahi-daemon.socket 2>/dev/null || true
+
+# Disable and mask firewalld to allow network communication in test VMs
+RUN systemctl disable firewalld.service 2>/dev/null || true && \
+    systemctl mask firewalld.service 2>/dev/null || true
 
 # STAGE 1.6: Replace the installed binaries with our custom versions (if built)
 # This happens AFTER package installation but BEFORE initramfs generation
