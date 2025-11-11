@@ -1,19 +1,13 @@
 package client
 
 import (
-	"github.com/kairos-io/kairos-sdk/collector"
-	"gopkg.in/yaml.v3"
+	"github.com/kairos-io/kairos-sdk/kcrypt"
+	"github.com/kairos-io/kairos-sdk/types"
 )
-
-// There are the directories under which we expect to find kairos configuration.
-// When we are booted from an iso (during installation), configuration is expected
-// under `/oem`. When we are booting an installed system (in initramfs phase),
-// the path is `/sysroot/oem`.
-// When we run the challenger in hooks, we may have the config under /tmp/oem
-var confScanDirs = []string{"/oem", "/sysroot/oem", "/tmp/oem"}
 
 type Client struct {
 	Config Config
+	Logger types.KairosLogger
 }
 
 type Config struct {
@@ -21,34 +15,50 @@ type Config struct {
 		Challenger struct {
 			MDNS        bool   `yaml:"mdns,omitempty"`
 			Server      string `yaml:"challenger_server,omitempty"`
-			NVIndex     string `yaml:"nv_index,omitempty"` // Non-volatile index memory: where we store the encrypted passphrase (offline mode)
-			CIndex      string `yaml:"c_index,omitempty"`  // Certificate index: this is where the rsa pair that decrypts the passphrase lives
-			TPMDevice   string `yaml:"tpm_device,omitempty"`
 			Certificate string `yaml:"certificate,omitempty"`
 		}
+		TPMDevice string `yaml:"tpm_device,omitempty"`
 	}
 }
 
-func unmarshalConfig() (Config, error) {
-	var result Config
+// newEmptyConfig returns an empty config
+// The actual config is now passed via the DiscoveryPasswordPayload JSON from the caller
+func newEmptyConfig() Config {
+	return Config{}
+}
 
-	o := &collector.Options{NoLogs: true, MergeBootCMDLine: false}
-	if err := o.Apply(collector.Directories(confScanDirs...)); err != nil {
-		return result, err
+// LoadConfigFromCollector loads configuration from kairos-sdk collector.
+// This scans the standard Kairos config directories and extracts kcrypt configuration.
+func LoadConfigFromCollector(logger types.KairosLogger) Config {
+	conf := newEmptyConfig()
+
+	kcryptConfig := kcrypt.ScanKcryptConfig(logger)
+	if kcryptConfig == nil {
+		logger.Debugf("No kcrypt config found via collector")
+		return conf
 	}
 
-	c, err := collector.Scan(o, func(d []byte) ([]byte, error) {
-		return d, nil
-	})
-	if err != nil {
-		return result, err
+	// Populate config from collector
+	if kcryptConfig.TPMDevice != "" {
+		conf.Kcrypt.TPMDevice = kcryptConfig.TPMDevice
+	}
+	if kcryptConfig.ChallengerServer != "" {
+		conf.Kcrypt.Challenger.Server = kcryptConfig.ChallengerServer
+	}
+	// MDNS is a bool, so check if it's true (explicitly set to true in config)
+	if kcryptConfig.MDNS {
+		conf.Kcrypt.Challenger.MDNS = kcryptConfig.MDNS
+		logger.Debugf("Loaded MDNS from collector: %t", conf.Kcrypt.Challenger.MDNS)
+	} else {
+		logger.Debugf("MDNS not set in collector config (value: %t), defaulting to false", kcryptConfig.MDNS)
+		conf.Kcrypt.Challenger.MDNS = false
+	}
+	if kcryptConfig.Certificate != "" {
+		conf.Kcrypt.Challenger.Certificate = kcryptConfig.Certificate
 	}
 
-	a, _ := c.String()
-	err = yaml.Unmarshal([]byte(a), &result)
-	if err != nil {
-		return result, err
-	}
+	logger.Debugf("Loaded config from collector: TPMDevice=%s, Server=%s, MDNS=%t",
+		conf.Kcrypt.TPMDevice, conf.Kcrypt.Challenger.Server, conf.Kcrypt.Challenger.MDNS)
 
-	return result, nil
+	return conf
 }

@@ -23,25 +23,12 @@ jobs:
           fetch-depth: 0
       - name: Install Go
         uses: actions/setup-go@v6
-      - name: Install earthly
-        uses: earthly/actions-setup@v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: build iso
+      - name: Build ISO
         run: |
-          # Configure earthly to use the docker mirror in CI
-          # https://docs.earthly.dev/ci-integration/pull-through-cache#configuring-earthly-to-use-the-cache
-          mkdir -p ~/.earthly/
-          cat << EOF > ~/.earthly/config.yml
-          global:
-            buildkit_additional_config: |
-              [registry."docker.io"]
-                mirrors = ["registry.docker-mirror.svc.cluster.local:5000"]
-              [registry."registry.docker-mirror.svc.cluster.local:5000"]
-                insecure = true
-          EOF
-
-          earthly -P +iso
+          make kairos-iso
+        env:
+          IMMUCORE_REF: main
+          KAIROS_AGENT_REF: main
       - uses: actions/upload-artifact@v5
         with:
           name: challenger.iso.zip
@@ -55,12 +42,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Basic encryption tests
           - label: "local-encryption"
           - label: "remote-auto"
           - label: "remote-static"
           - label: "remote-https-pinned"
           - label: "remote-https-bad-cert"
           - label: "discoverable-kms"
+          # Consolidated remote attestation workflow test
+          - label: "remote-complete-workflow"
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -70,10 +60,6 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - name: Install earthly
-        uses: earthly/actions-setup@v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Install deps
         run: |
           curl -L https://github.com/mudler/luet/releases/download/0.33.0/luet-0.33.0-linux-amd64 -o luet
@@ -90,10 +76,12 @@ jobs:
         env:
           LABEL: ${{ matrix.label }}
           KVM: true
+          CGO_ENABLED: 1
         run: |
           sudo apt update && \
           sudo apt install -y git qemu-system-x86 qemu-utils swtpm jq make glibc-tools \
-          openssl curl gettext ca-certificates curl gnupg lsb-release
+          openssl curl gettext ca-certificates curl gnupg lsb-release build-essential \
+          libssl-dev
 
           export ISO=$PWD/$(ls *.iso)
           # update controllers

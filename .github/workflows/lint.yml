@@ -22,12 +22,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Install Go
-        uses: actions/setup-go@v6
-      - name: Install earthly
-        uses: earthly/actions-setup@v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Run Lint checks
+      - name: Run yamllint
         run: |
-          earthly +lint
+          pip install yamllint
+          yamllint -c .yamllint .github/workflows/

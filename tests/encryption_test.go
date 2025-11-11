@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -21,7 +22,7 @@ var installationOutput string
 var vm VM
 var mdnsVM VM
 
-var _ = Describe("kcrypt encryption", func() {
+var _ = Describe("kcrypt encryption", Label("encryption-tests"), func() {
 	var config string
 	var vmOpts VMOptions
 	var expectedInstallationSuccess bool
@@ -45,9 +46,11 @@ var _ = Describe("kcrypt encryption", func() {
 		err = os.WriteFile(configFile.Name(), []byte(config), 0744)
 		Expect(err).ToNot(HaveOccurred())
 
+		By("Copying the config in the VM")
 		err = vm.Scp(configFile.Name(), "config.yaml", "0744")
 		Expect(err).ToNot(HaveOccurred())
 
+		By("starting the installation")
 		installationOutput, err = vm.Sudo("/bin/bash -c 'set -o pipefail && kairos-agent manual-install --device auto config.yaml 2>&1 | tee manual-install.txt'")
 		if expectedInstallationSuccess {
 			Expect(err).ToNot(HaveOccurred(), installationOutput)
@@ -71,7 +74,9 @@ var _ = Describe("kcrypt encryption", func() {
 		Expect(err).ToNot(HaveOccurred())
 	})
 
-	When("discovering KMS with mdns", Label("discoverable-kms"), func() {
+	// TODO: Use bridge networking because the default qemu networking won't cut it.
+	// The mdns response can't reach the VM.
+	XWhen("discovering KMS with mdns", Label("discoverable-kms"), func() {
 		var tpmHash string
 		var mdnsHostname string
 
@@ -83,6 +88,17 @@ var _ = Describe("kcrypt encryption", func() {
 
 			By("deploying simple-mdns-server vm")
 			mdnsVM = deploySimpleMDNSServer(mdnsHostname)
+			By("continuing")
+
+			// Ensure mdnsVM is cleaned up even if test fails
+			DeferCleanup(func() {
+				if mdnsVM.StateDir != "" {
+					err := mdnsVM.Destroy(func(vm VM) {})
+					if err != nil {
+						fmt.Printf("Warning: Failed to cleanup mdnsVM: %v\n", err)
+					}
+				}
+			})
 
 			config = fmt.Sprintf(`#cloud-config
 
@@ -90,6 +106,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -100,23 +118,19 @@ install:
 
 kcrypt:
   challenger:
-	  mdns: true
+    mdns: true
     challenger_server: "http://%[1]s"
 `, mdnsHostname)
 		})
 
 		AfterEach(func() {
-			cmd := exec.Command("kubectl", "delete", "sealedvolume", tpmHash)
+			sealedVolumeName := getSealedVolumeName(tpmHash)
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
 			out, err := cmd.CombinedOutput()
 			Expect(err).ToNot(HaveOccurred(), out)
-
-			err = mdnsVM.Destroy(func(vm VM) {})
-			Expect(err).ToNot(HaveOccurred())
 		})
 
 		It("discovers the KMS using mdns", func() {
-			Skip("TODO: make this test work")
-
 			By("rebooting")
 			vm.Reboot()
 			By("checking that we can connect after installation")
@@ -142,6 +156,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 `
 		})
 
@@ -166,6 +182,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -184,7 +202,8 @@ kcrypt:
 		})
 
 		AfterEach(func() {
-			cmd := exec.Command("kubectl", "delete", "sealedvolume", tpmHash)
+			sealedVolumeName := getSealedVolumeName(tpmHash)
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
 			out, err := cmd.CombinedOutput()
 			Expect(err).ToNot(HaveOccurred(), out)
 		})
@@ -199,25 +218,36 @@ kcrypt:
 
 			// Expect a secret to be created
 			cmd := exec.Command("kubectl", "get", "secrets",
-				fmt.Sprintf("%s-cos-persistent", tpmHash),
-				"-o=go-template='{{.data.generated_by|base64decode}}'",
+				fmt.Sprintf("%s-cos-persistent", getSealedVolumeName(tpmHash)),
+				"-o=go-template='{{index .metadata.labels \"kcrypt.kairos.io/managed-by\"}}'",
 			)
 
 			secretOut, err := cmd.CombinedOutput()
 			Expect(err).ToNot(HaveOccurred(), string(secretOut))
-			Expect(string(secretOut)).To(MatchRegexp("tpm"))
+			// Verify the secret was created by kcrypt-challenger
+			// Trim quotes and whitespace from kubectl output
+			managedBy := strings.Trim(string(secretOut), "'\" \n\r\t")
+			Expect(managedBy).To(Equal("kcrypt-challenger"))
 		})
 	})
 
 	// https://kairos.io/docs/advanced/partition_encryption/#scenario-static-keys
 	When("using a remote key management server (static keys)", Label("remote-static"), func() {
 		var tpmHash string
+		var sealedVolumeName string
+		var secretName string
 		var err error
 
 		BeforeEach(func() {
 			tpmHash, err = vm.Sudo("/system/discovery/kcrypt-discovery-challenger")
 			Expect(err).ToNot(HaveOccurred(), tpmHash)
+			tpmHash = strings.TrimSpace(tpmHash)
 
+			// Use safe Kubernetes names (TPM hash is 64 chars, exceeds 63 char limit)
+			sealedVolumeName = getSealedVolumeName(tpmHash)
+			secretName = fmt.Sprintf("%s-cos-persistent", sealedVolumeName)
+
+			By(fmt.Sprintf("Creating secret with name: %s", secretName))
 			kubectlApplyYaml(fmt.Sprintf(`---
 apiVersion: v1
 kind: Secret
@@ -226,9 +256,22 @@ metadata:
   namespace: default
 type: Opaque
 stringData:
-  pass: "awesome-plaintext-passphrase"
-`, tpmHash))
+  passphrase: "awesome-plaintext-passphrase"
+`, secretName))
 
+			// Verify secret was created
+			By(fmt.Sprintf("Waiting for secret %s to be ready", secretName))
+			Eventually(func() bool {
+				exists := secretExists(secretName)
+				if !exists {
+					GinkgoWriter.Printf("Secret %s does not exist yet, waiting...\n", secretName)
+				}
+				return exists
+			}, 10*time.Second, 1*time.Second).Should(BeTrue(), fmt.Sprintf("Secret %s should exist", secretName))
+
+			By(fmt.Sprintf("Secret %s verified to exist", secretName))
+
+			By(fmt.Sprintf("Creating SealedVolume with name: %s, TPM hash: %s", sealedVolumeName, tpmHash[:16]+"..."))
 			kubectlApplyYaml(fmt.Sprintf(`---
 apiVersion: keyserver.kairos.io/v1alpha1
 kind: SealedVolume
@@ -236,14 +279,14 @@ metadata:
     name: %[1]s
     namespace: default
 spec:
-  TPMHash: "%[1]s"
+  TPMHash: "%[2]s"
   partitions:
     - label: COS_PERSISTENT
       secret:
-       name: %[1]s
-       path: pass
+       name: %[3]s
+       path: passphrase
   quarantined: false
-`, tpmHash))
+`, sealedVolumeName, tpmHash, secretName))
 
 			config = fmt.Sprintf(`#cloud-config
 
@@ -251,6 +294,8 @@ hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -266,11 +311,11 @@ kcrypt:
 		})
 
 		AfterEach(func() {
-			cmd := exec.Command("kubectl", "delete", "sealedvolume", tpmHash)
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
 			out, err := cmd.CombinedOutput()
 			Expect(err).ToNot(HaveOccurred(), out)
 
-			cmd = exec.Command("kubectl", "delete", "secret", tpmHash)
+			cmd = exec.Command("kubectl", "delete", "secret", secretName)
 			out, err = cmd.CombinedOutput()
 			Expect(err).ToNot(HaveOccurred(), out)
 		})
@@ -286,31 +331,23 @@ kcrypt:
 		})
 	})
 
-	When("the key management server is listening on https", func() {
+	When("the certificate is pinned on the configuration", Label("remote-https-pinned"), func() {
 		var tpmHash string
 
 		BeforeEach(func() {
 			tpmHash = createTPMPassphraseSecret(vm)
-		})
-
-		AfterEach(func() {
-			cmd := exec.Command("kubectl", "delete", "sealedvolume", tpmHash)
-			out, err := cmd.CombinedOutput()
-			Expect(err).ToNot(HaveOccurred(), out)
-		})
-
-		When("the certificate is pinned on the configuration", Label("remote-https-pinned"), func() {
-			BeforeEach(func() {
-				cert := getChallengerServerCert()
-				kcryptConfig := createConfigWithCert(fmt.Sprintf("https://%s", os.Getenv("KMS_ADDRESS")), cert)
-				kcryptConfigBytes, err := yaml.Marshal(kcryptConfig)
-				Expect(err).ToNot(HaveOccurred())
-				config = fmt.Sprintf(`#cloud-config
+			cert := getChallengerServerCert()
+			kcryptConfig := createConfigWithCert(fmt.Sprintf("https://%s", os.Getenv("KMS_ADDRESS")), cert)
+			kcryptConfigBytes, err := yaml.Marshal(kcryptConfig)
+			Expect(err).ToNot(HaveOccurred())
+			config = fmt.Sprintf(`#cloud-config
 
 hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -322,28 +359,40 @@ install:
 %s
 
 `, string(kcryptConfigBytes))
-			})
-
-			It("successfully talks to the server", func() {
-				vm.Reboot()
-				vm.EventuallyConnects(1200)
-				out, err := vm.Sudo("blkid")
-				Expect(err).ToNot(HaveOccurred(), out)
-				Expect(out).To(MatchRegexp("TYPE=\"crypto_LUKS\" PARTLABEL=\"persistent\""), out)
-				Expect(out).To(MatchRegexp("/dev/mapper.*LABEL=\"COS_PERSISTENT\""), out)
-			})
 		})
 
-		When("the no certificate is set in the configuration", Label("remote-https-bad-cert"), func() {
-			BeforeEach(func() {
-				expectedInstallationSuccess = false
+		It("successfully talks to the server", func() {
+			vm.Reboot()
+			vm.EventuallyConnects(1200)
+			out, err := vm.Sudo("blkid")
+			Expect(err).ToNot(HaveOccurred(), out)
+			Expect(out).To(MatchRegexp("TYPE=\"crypto_LUKS\" PARTLABEL=\"persistent\""), out)
+			Expect(out).To(MatchRegexp("/dev/mapper.*LABEL=\"COS_PERSISTENT\""), out)
+		})
 
-				config = fmt.Sprintf(`#cloud-config
+		AfterEach(func() {
+			sealedVolumeName := getSealedVolumeName(tpmHash)
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
+			out, err := cmd.CombinedOutput()
+			Expect(err).ToNot(HaveOccurred(), out)
+		})
+	})
+
+	When("the no certificate is set in the configuration", Label("remote-https-bad-cert"), func() {
+		var tpmHash string
+
+		BeforeEach(func() {
+			tpmHash = createTPMPassphraseSecret(vm)
+			expectedInstallationSuccess = false
+
+			config = fmt.Sprintf(`#cloud-config
 
 hostname: metal-{{ trunc 4 .MachineID }}
 users:
 - name: kairos
   passwd: kairos
+  groups:
+    - admin
 
 install:
   encrypted_partitions:
@@ -356,13 +405,19 @@ kcrypt:
   challenger:
     challenger_server: "https://%s"
 `, os.Getenv("KMS_ADDRESS"))
-			})
+		})
 
-			It("fails to talk to the server", func() {
-				out, err := vm.Sudo("cat manual-install.txt")
-				Expect(err).ToNot(HaveOccurred(), out)
-				Expect(out).To(MatchRegexp("failed to verify certificate: x509: certificate signed by unknown authority"))
-			})
+		It("fails to talk to the server", func() {
+			out, err := vm.Sudo("cat manual-install.txt")
+			Expect(err).ToNot(HaveOccurred(), out)
+			Expect(out).To(MatchRegexp("failed to verify certificate: x509: certificate signed by unknown authority"))
+		})
+
+		AfterEach(func() {
+			sealedVolumeName := getSealedVolumeName(tpmHash)
+			cmd := exec.Command("kubectl", "delete", "sealedvolume", sealedVolumeName)
+			out, err := cmd.CombinedOutput()
+			Expect(err).ToNot(HaveOccurred(), out)
 		})
 	})
 })
@@ -372,19 +427,6 @@ func printInstallationOutput(message string, callerSkip ...int) {
 
 	// Ensures the correct line numbers are reported
 	Fail(message, callerSkip[0]+1)
-}
-
-func kubectlApplyYaml(yamlData string) {
-	yamlFile, err := os.CreateTemp("", "")
-	Expect(err).ToNot(HaveOccurred())
-	defer os.Remove(yamlFile.Name())
-
-	err = os.WriteFile(yamlFile.Name(), []byte(yamlData), 0744)
-	Expect(err).ToNot(HaveOccurred())
-
-	cmd := exec.Command("kubectl", "apply", "-f", yamlFile.Name())
-	out, err := cmd.CombinedOutput()
-	Expect(err).ToNot(HaveOccurred(), out)
 }
 
 func getChallengerServerCert() string {
@@ -408,6 +450,10 @@ func createConfigWithCert(server, cert string) client.Config {
 func createTPMPassphraseSecret(vm VM) string {
 	tpmHash, err := vm.Sudo("/system/discovery/kcrypt-discovery-challenger")
 	Expect(err).ToNot(HaveOccurred(), tpmHash)
+	tpmHash = strings.TrimSpace(tpmHash)
+
+	// Use safe Kubernetes name (TPM hash is 64 chars, exceeds 63 char limit)
+	sealedVolumeName := getSealedVolumeName(tpmHash)
 
 	kubectlApplyYaml(fmt.Sprintf(`---
 apiVersion: keyserver.kairos.io/v1alpha1
@@ -416,11 +462,11 @@ metadata:
   name: "%[1]s"
   namespace: default
 spec:
-  TPMHash: "%[1]s"
+  TPMHash: "%[2]s"
   partitions:
     - label: COS_PERSISTENT
   quarantined: false
-`, strings.TrimSpace(tpmHash)))
+`, sealedVolumeName, tpmHash))
 
 	return tpmHash
 }
@@ -436,18 +482,39 @@ func deploySimpleMDNSServer(hostname string) VM {
 	opts.Memory = "2000"
 	opts.CPUS = "1"
 	opts.EmulateTPM = false
+	By("starting the VM for the mdns server")
 	_, vm := startVM(opts)
 	vm.EventuallyConnects(1200)
 
+	By("downloading the simple-mdns-server release")
 	out, err := vm.Sudo(`curl -s https://api.github.com/repos/kairos-io/simple-mdns-server/releases/latest | jq -r .assets[].browser_download_url | grep $(uname -m) | xargs curl -L -o sms.tar.gz`)
 	Expect(err).ToNot(HaveOccurred(), string(out))
 
+	By("extracting the binary")
 	out, err = vm.Sudo("tar xvf sms.tar.gz")
 	Expect(err).ToNot(HaveOccurred(), string(out))
 
+	// Stop, disable, and mask avahi-daemon to free up port 5353 for simple-mdns-server
+	// Masking prevents it from being started even if something tries to enable it
+	By("stopping avahi-daemon services")
+	out, err = vm.Sudo("systemctl stop avahi-daemon.service avahi-daemon.socket 2>/dev/null || true")
+	Expect(err).ToNot(HaveOccurred(), string(out))
+	out, err = vm.Sudo("systemctl disable avahi-daemon.service avahi-daemon.socket 2>/dev/null || true")
+	Expect(err).ToNot(HaveOccurred(), string(out))
+	out, err = vm.Sudo("systemctl mask avahi-daemon.service avahi-daemon.socket 2>/dev/null || true")
+	Expect(err).ToNot(HaveOccurred(), string(out))
+
+	// Verify avahi-daemon is stopped and port 5353 is free
+	By("cheking if port 5353 is free")
+	out, err = vm.Sudo("systemctl is-active avahi-daemon.service avahi-daemon.socket 2>&1 || true")
+	Expect(err).ToNot(HaveOccurred(), string(out))
+	out, err = vm.Sudo("ss -ulnp | grep :5353 || echo 'Port 5353 is free'")
+	Expect(err).ToNot(HaveOccurred(), string(out))
+
 	// Start the simple-mdns-server in the background
+	By("starting the simple-mdns-server")
 	out, err = vm.Sudo(fmt.Sprintf(
-		"/bin/bash -c './simple-mdns-server --port 80 --address 10.0.2.2 --serviceType _kcrypt._tcp --hostName %s &'", hostname))
+		"nohup ./simple-mdns-server --port 80 --address 10.0.2.2 --serviceType _kcrypt._tcp --hostName %s > /dev/null 2>&1 &", hostname))
 	Expect(err).ToNot(HaveOccurred(), string(out))
 
 	return vm

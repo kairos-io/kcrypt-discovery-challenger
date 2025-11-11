@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/mdns"
+	"github.com/kairos-io/kairos-sdk/types"
 )
 
 const (
@@ -18,9 +19,8 @@ const (
 // queryMDNS will make an mdns query on local network to find a kcrypt challenger server
 // instance. If none is found, the original URL is returned and no additional headers.
 // If a response is received, the IP address and port from the response will be returned// and an additional "Host" header pointing to the original host.
-func queryMDNS(originalURL string) (string, map[string]string, error) {
+func queryMDNS(originalURL string, logger types.KairosLogger) (string, map[string]string, error) {
 	additionalHeaders := map[string]string{}
-	var err error
 
 	parsedURL, err := url.Parse(originalURL)
 	if err != nil {
@@ -28,40 +28,52 @@ func queryMDNS(originalURL string) (string, map[string]string, error) {
 	}
 
 	host := parsedURL.Host
-	if !strings.HasSuffix(host, ".local") { // sanity check
+	// Extract hostname without port for .local check
+	hostname := host
+	if hostPort := strings.Split(host, ":"); len(hostPort) > 1 {
+		hostname = hostPort[0]
+	}
+	if !strings.HasSuffix(hostname, ".local") { // sanity check
 		return "", additionalHeaders, fmt.Errorf("domain should end in \".local\" when using mdns")
 	}
 
-	mdnsIP, mdnsPort := discoverMDNSServer(host)
+	mdnsIP, mdnsPort := discoverMDNSServer(hostname, logger)
 	if mdnsIP == "" { // no reply
-		logToFile("no reply from mdns\n")
-		return originalURL, additionalHeaders, nil
+		logger.Debugf("no reply from mdns after %v timeout", MDNSTimeout)
+		// For .local domains, mDNS is required - don't fall back to DNS
+		return "", additionalHeaders, fmt.Errorf("mDNS resolution failed: no mDNS server found for %s (searched for service type %s)", hostname, MDNSServiceType)
 	}
 
-	additionalHeaders["Host"] = parsedURL.Host
-	newURL := strings.ReplaceAll(originalURL, host, mdnsIP)
-	// Remove any port in the original url
-	if port := parsedURL.Port(); port != "" {
-		newURL = strings.ReplaceAll(newURL, port, "")
-	}
+	// Set Host header to original hostname (for virtual hosting)
+	additionalHeaders["Host"] = host
 
-	// Add any possible port from the mdns response
+	// Build new URL with discovered IP address
+	// Use the port from mDNS response if available, otherwise use original port
+	newHost := mdnsIP
 	if mdnsPort != "" {
-		newURL = strings.ReplaceAll(newURL, mdnsIP, fmt.Sprintf("%s:%s", mdnsIP, mdnsPort))
+		newHost = fmt.Sprintf("%s:%s", mdnsIP, mdnsPort)
+	} else if parsedURL.Port() != "" {
+		// If mDNS didn't provide a port, keep the original port
+		newHost = fmt.Sprintf("%s:%s", mdnsIP, parsedURL.Port())
 	}
 
+	// Reconstruct URL with new host
+	parsedURL.Host = newHost
+	newURL := parsedURL.String()
+
+	logger.Debugf("mDNS resolved %s to %s", originalURL, newURL)
 	return newURL, additionalHeaders, nil
 }
 
 // discoverMDNSServer performs an mDNS query to discover any running kcrypt challenger
 // servers on the same network that matches the given hostname.
 // If a response if received, the IP address and the Port from the response are returned.
-func discoverMDNSServer(hostname string) (string, string) {
+func discoverMDNSServer(hostname string, logger types.KairosLogger) (string, string) {
 	// Make a channel for results and start listening
 	entriesCh := make(chan *mdns.ServiceEntry, 4)
 	defer close(entriesCh)
 
-	logToFile("Will now wait for some mdns server to respond\n")
+	logger.Debugf("Will now wait for some mdns server to respond")
 	// Start the lookup. It will block until we read from the chan.
 	mdns.Lookup(MDNSServiceType, entriesCh)
 
@@ -70,15 +82,15 @@ func discoverMDNSServer(hostname string) (string, string) {
 	for {
 		select {
 		case entry := <-entriesCh:
-			logToFile("mdns response received\n")
+			logger.Debugf("mdns response received")
 			if entry.Host == expectedHost {
-				logToFile("%s matches %s\n", entry.Host, expectedHost)
+				logger.Debugf("%s matches %s", entry.Host, expectedHost)
 				return entry.AddrV4.String(), strconv.Itoa(entry.Port) // TODO: v6?
 			} else {
-				logToFile("%s didn't match %s\n", entry.Host, expectedHost)
+				logger.Debugf("%s didn't match %s", entry.Host, expectedHost)
 			}
 		case <-time.After(MDNSTimeout):
-			logToFile("timed out waiting for mdns\n")
+			logger.Debugf("timed out waiting for mdns")
 			return "", ""
 		}
 	}

@@ -23,11 +23,40 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// PCRValues represents Platform Configuration Register values for boot state verification
+// Uses a flexible map where keys are PCR indices (as strings) and values are hex-encoded PCR values
+type PCRValues struct {
+	// PCRs is a flexible map of PCR index (as string) to PCR value (hex-encoded)
+	// Example: {"0": "a1b2c3...", "7": "d4e5f6...", "11": "g7h8i9..."}
+	// This allows for any combination of PCRs without hardcoding specific indices
+	PCRs map[string]string `json:"pcrs,omitempty"`
+}
+
+// AttestationSpec defines TPM attestation data for TOFU (Trust On First Use)
+// https://en.wikipedia.org/wiki/Trust_on_first_use
+// enrollment and verification with transient AK approach,
+// only the EK is stored as the trusted identity
+type AttestationSpec struct {
+	// EKPublicKey stores the Endorsement Key public key in PEM format
+	// This is the single trusted identity for the TPM
+	EKPublicKey string `json:"ekPublicKey,omitempty"`
+
+	// PCRValues stores the expected PCR values for boot state verification
+	PCRValues *PCRValues `json:"pcrValues,omitempty"`
+
+	// EnrolledAt timestamp when this TPM was first enrolled
+	EnrolledAt *metav1.Time `json:"enrolledAt,omitempty"`
+
+	// LastVerifiedAt timestamp of the last successful attestation
+	LastVerifiedAt *metav1.Time `json:"lastVerifiedAt,omitempty"`
+}
+
 // SealedVolumeSpec defines the desired state of SealedVolume
 type SealedVolumeSpec struct {
-	TPMHash     string          `json:"TPMHash,omitempty"`
-	Partitions  []PartitionSpec `json:"partitions,omitempty"`
-	Quarantined bool            `json:"quarantined,omitempty"`
+	TPMHash     string           `json:"TPMHash,omitempty"`
+	Partitions  []PartitionSpec  `json:"partitions,omitempty"`
+	Quarantined bool             `json:"quarantined,omitempty"`
+	Attestation *AttestationSpec `json:"attestation,omitempty"`
 }
 
 // PartitionSpec defines a Partition. A partition can be identified using

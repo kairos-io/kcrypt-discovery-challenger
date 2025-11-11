@@ -1,4 +1,4 @@
-package challenger_test
+package attestation_test
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func TestChallenger(t *testing.T) {
+func TestAttestation(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Kcrypt challenger suite")
+	RunSpecs(t, "Attestation Suite")
 }
