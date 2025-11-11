@@ -219,12 +219,15 @@ kcrypt:
 			// Expect a secret to be created
 			cmd := exec.Command("kubectl", "get", "secrets",
 				fmt.Sprintf("%s-cos-persistent", getSealedVolumeName(tpmHash)),
-				"-o=go-template='{{.data.generated_by|base64decode}}'",
+				"-o=go-template='{{index .metadata.labels \"kcrypt.kairos.io/managed-by\"}}'",
 			)
 
 			secretOut, err := cmd.CombinedOutput()
 			Expect(err).ToNot(HaveOccurred(), string(secretOut))
-			Expect(string(secretOut)).To(MatchRegexp("tpm"))
+			// Verify the secret was created by kcrypt-challenger
+			// Trim quotes and whitespace from kubectl output
+			managedBy := strings.Trim(string(secretOut), "'\" \n\r\t")
+			Expect(managedBy).To(Equal("kcrypt-challenger"))
 		})
 	})
 
