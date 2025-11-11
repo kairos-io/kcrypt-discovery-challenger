@@ -21,6 +21,8 @@ import (
 	. "github.com/spectrocloud/peg/matcher"
 	machine "github.com/spectrocloud/peg/pkg/machine"
 	"github.com/spectrocloud/peg/pkg/machine/types"
+
+	"github.com/kairos-io/kairos-challenger/pkg/kube"
 )
 
 // Global VM variable for fail handler access
@@ -342,10 +344,9 @@ func expectPassphraseRetrievalWithError(vm VM, partitionLabel string, expectedEr
 }
 
 // Helper to get the correct SealedVolume name from TPM hash
+// This uses the same logic as pkg/challenger/challenger.go
 func getSealedVolumeName(tpmHash string) string {
-	// Convert to lowercase and take first 8 characters to match the actual naming pattern
-	// This matches the pattern used in pkg/challenger/challenger.go: fmt.Sprintf("tofu-%s", tpmHash[:8])
-	return fmt.Sprintf("tofu-%s", strings.ToLower(tpmHash[:8]))
+	return kube.SafeKubeName(fmt.Sprintf("tofu-%s", strings.ToLower(tpmHash[:8])))
 }
 
 // Helper to create SealedVolume with specific attestation configuration

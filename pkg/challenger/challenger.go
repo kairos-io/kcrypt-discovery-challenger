@@ -3,15 +3,12 @@ package challenger
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"maps"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -21,6 +18,7 @@ import (
 
 	"github.com/kairos-io/kairos-challenger/controllers"
 	"github.com/kairos-io/kairos-challenger/pkg/attestation"
+	"github.com/kairos-io/kairos-challenger/pkg/kube"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -213,7 +211,7 @@ func (s SealedVolumeData) DefaultSecret() (string, string) {
 	if s.SecretPath != "" {
 		secretPath = s.SecretPath
 	}
-	return safeKubeName(secretName), safeKubeName(secretPath)
+	return kube.SafeKubeName(secretName), kube.SafeKubeName(secretPath)
 }
 
 // generateTOFUPassphrase creates a cryptographically secure random passphrase for TOFU enrollment
@@ -230,97 +228,6 @@ func generateTOFUPassphrase() (string, error) {
 	return passphrase, nil
 }
 
-// safeKubeName ensures a string conforms to Kubernetes naming constraints
-// - Maximum 63 characters
-// - Must be a valid DNS subdomain (alphanumeric and hyphens only)
-// - Must start and end with alphanumeric characters
-// - Includes checksum to avoid collisions when truncating
-func safeKubeName(name string) string {
-	originalName := name
-
-	// If the name is already short enough and valid, return it as-is
-	if len(name) <= 63 && isValidKubeName(name) {
-		return name
-	}
-
-	// Calculate checksum early based on original name to avoid collisions
-	hash := sha256.Sum256([]byte(originalName))
-	checksum := hex.EncodeToString(hash[:])[:8] // Use first 8 chars of hash
-
-	// Clean the name first
-	cleaned := sanitizeKubeName(name)
-
-	// If cleaned name is empty, use the checksum as the name
-	if cleaned == "" {
-		return "kube-" + checksum
-	}
-
-	// If still too long, we need to truncate and add a checksum
-	if len(cleaned) > 63 {
-		// Truncate to leave room for checksum (63 - 9 for "-" + 8 char checksum = 54)
-		maxBaseLength := 54
-		if len(cleaned) > maxBaseLength {
-			cleaned = cleaned[:maxBaseLength]
-			cleaned = strings.TrimSuffix(cleaned, "-")
-		}
-
-		// Append checksum
-		cleaned = cleaned + "-" + checksum
-	}
-
-	return cleaned
-}
-
-// sanitizeKubeName cleans a string to be a valid Kubernetes name
-func sanitizeKubeName(name string) string {
-	// Replace invalid characters with hyphens
-	// Keep only alphanumeric characters and hyphens, convert uppercase to lowercase
-	var result strings.Builder
-	for _, r := range name {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			result.WriteRune(r)
-		} else if r >= 'A' && r <= 'Z' {
-			// Convert uppercase to lowercase
-			result.WriteRune(r + 32)
-		} else {
-			result.WriteRune('-')
-		}
-	}
-
-	cleaned := result.String()
-
-	// Remove leading/trailing hyphens and ensure it starts/ends with alphanumeric
-	cleaned = strings.Trim(cleaned, "-")
-
-	return cleaned
-}
-
-// isValidKubeName checks if a name is already a valid Kubernetes name
-func isValidKubeName(name string) bool {
-	if len(name) == 0 || len(name) > 63 {
-		return false
-	}
-
-	// Must start and end with alphanumeric
-	if !isAlphanumeric(rune(name[0])) || !isAlphanumeric(rune(name[len(name)-1])) {
-		return false
-	}
-
-	// All characters must be alphanumeric or hyphens
-	for _, r := range name {
-		if !isAlphanumeric(r) && r != '-' {
-			return false
-		}
-	}
-
-	return true
-}
-
-// isAlphanumeric checks if a rune is alphanumeric
-func isAlphanumeric(r rune) bool {
-	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
-}
-
 // createOrReuseTOFUSecret creates a Kubernetes secret containing the generated passphrase
 // If a secret with the same name already exists, it returns the existing passphrase
 // Returns the passphrase that should be used (either new or existing)
@@ -332,7 +239,7 @@ func createOrReuseTOFUSecret(kclient *kubernetes.Clientset, namespace, secretNam
 			Labels: map[string]string{
 				"app.kubernetes.io/name":      "kcrypt-challenger",
 				"app.kubernetes.io/component": "encryption-secret",
-				"kcrypt.kairos.io/tpm-hash":   safeKubeName(tpmHash),
+				"kcrypt.kairos.io/tpm-hash":   kube.SafeKubeName(tpmHash),
 				"kcrypt.kairos.io/partition":  partitionLabel,
 				"kcrypt.kairos.io/managed-by": "kcrypt-challenger", // Additional safety label
 			},
@@ -372,7 +279,7 @@ func createOrReuseTOFUSecret(kclient *kubernetes.Clientset, namespace, secretNam
 
 // createTOFUSealedVolumeWithAttestation creates a SealedVolume resource with pre-created attestation data
 func createTOFUSealedVolumeWithAttestation(reconciler *controllers.SealedVolumeReconciler, namespace, tpmHash, secretName, secretPath string, partition PartitionInfo, attestation *keyserverv1alpha1.AttestationSpec) error {
-	volumeName := safeKubeName(fmt.Sprintf("tofu-%s", tpmHash[:8]))
+	volumeName := kube.SafeKubeName(fmt.Sprintf("tofu-%s", tpmHash[:8]))
 
 	sealedVolume := &keyserverv1alpha1.SealedVolume{
 		ObjectMeta: metav1.ObjectMeta{
@@ -675,7 +582,7 @@ func performInitialEnrollment(ctx *EnrollmentContext, attestation *ClientAttesta
 	logger.Info("Creating new TOFU enrollment")
 
 	// Generate secret name and path for new enrollment using DefaultSecret logic
-	safeVolumeName := safeKubeName(fmt.Sprintf("tofu-%s", ctx.TPMHash[:8]))
+	safeVolumeName := kube.SafeKubeName(fmt.Sprintf("tofu-%s", ctx.TPMHash[:8]))
 	volumeData := SealedVolumeData{
 		PartitionLabel: ctx.Partition.Label,
 		VolumeName:     safeVolumeName,
