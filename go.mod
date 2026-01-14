@@ -5,7 +5,7 @@ go 1.25.5
 require (
 	github.com/go-logr/logr v1.4.3
 	github.com/google/go-attestation v0.5.1
-	github.com/google/go-tpm v0.9.6
+	github.com/google/go-tpm v0.9.8
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/hashicorp/mdns v1.0.6
