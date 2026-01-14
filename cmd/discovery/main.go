@@ -10,7 +10,8 @@ import (
 	"github.com/kairos-io/kairos-challenger/cmd/discovery/client"
 	attpkg "github.com/kairos-io/kairos-challenger/pkg/attestation"
 	"github.com/kairos-io/kairos-sdk/kcrypt/bus"
-	"github.com/kairos-io/kairos-sdk/types"
+	loggerpkg "github.com/kairos-io/kairos-sdk/types/logger"
+	"github.com/kairos-io/kairos-sdk/types/partitions"
 	"github.com/kairos-io/tpm-helpers"
 	"github.com/mudler/go-pluggable"
 	"github.com/spf13/cobra"
@@ -223,7 +224,7 @@ func ExecuteWithArgs(args []string) error {
 }
 
 // loadConfigWithOverrides loads config from collector and applies CLI flag overrides
-func loadConfigWithOverrides(tpmDevice string, logger types.KairosLogger) client.Config {
+func loadConfigWithOverrides(tpmDevice string, logger loggerpkg.KairosLogger) client.Config {
 	// Load config from collector
 	conf := client.LoadConfigFromCollector(logger)
 
@@ -241,12 +242,12 @@ func loadConfigWithOverrides(tpmDevice string, logger types.KairosLogger) client
 // runTPMHash handles the root command - TPM hash generation
 func runTPMHash() error {
 	// Create logger based on debug flag
-	var logger types.KairosLogger
+	var logger loggerpkg.KairosLogger
 	if debug {
-		logger = types.NewKairosLogger("kcrypt-discovery-challenger", "debug", false)
+		logger = loggerpkg.NewKairosLogger("kcrypt-discovery-challenger", "debug", false)
 		logger.Debugf("Debug mode enabled for TPM hash generation")
 	} else {
-		logger = types.NewKairosLogger("kcrypt-discovery-challenger", "error", false)
+		logger = loggerpkg.NewKairosLogger("kcrypt-discovery-challenger", "error", false)
 	}
 
 	// Load configuration with CLI overrides
@@ -291,11 +292,11 @@ func runTPMHash() error {
 // runGetPassphrase handles the get subcommand - passphrase retrieval
 func runGetPassphrase(flags *GetFlags) error {
 	// Create logger based on debug flag
-	var logger types.KairosLogger
+	var logger loggerpkg.KairosLogger
 	if debug {
-		logger = types.NewKairosLogger("kcrypt-discovery-challenger", "debug", false)
+		logger = loggerpkg.NewKairosLogger("kcrypt-discovery-challenger", "debug", false)
 	} else {
-		logger = types.NewKairosLogger("kcrypt-discovery-challenger", "error", false)
+		logger = loggerpkg.NewKairosLogger("kcrypt-discovery-challenger", "error", false)
 	}
 
 	// Create client with potential CLI overrides
@@ -305,7 +306,7 @@ func runGetPassphrase(flags *GetFlags) error {
 	}
 
 	// Create partition object
-	partition := &types.Partition{
+	partition := &partitions.Partition{
 		Name:            flags.PartitionName,
 		UUID:            flags.PartitionUUID,
 		FilesystemLabel: flags.PartitionLabel,
@@ -340,7 +341,7 @@ func runPluginMode(eventType pluggable.EventType) error {
 		logLevel = "error"
 	}
 
-	logger := types.NewKairosLoggerWithExtraDirs("kcrypt-discovery-challenger", logLevel, true, "/var/log/kairos")
+	logger := loggerpkg.NewKairosLoggerWithExtraDirs("kcrypt-discovery-challenger", logLevel, true, "/var/log/kairos")
 	logger.Debugf("Debug mode enabled for plugin mode")
 	c, err := client.NewClientWithLogger(logger)
 	if err != nil {
@@ -355,7 +356,7 @@ func runPluginMode(eventType pluggable.EventType) error {
 }
 
 // createClientWithOverrides creates a client and applies CLI flag overrides to the config
-func createClientWithOverrides(serverURL string, enableMDNS bool, certificate string, tpmDevice string, logger types.KairosLogger) (*client.Client, error) {
+func createClientWithOverrides(serverURL string, enableMDNS bool, certificate string, tpmDevice string, logger loggerpkg.KairosLogger) (*client.Client, error) {
 	// Start with config loaded from collector with TPM overrides
 	conf := loadConfigWithOverrides(tpmDevice, logger)
 
@@ -407,12 +408,12 @@ func createClientWithOverrides(serverURL string, enableMDNS bool, certificate st
 // runInfo handles the info subcommand - display TPM enrollment information
 func runInfo(pcrsFlag string, tpmDevice string) error {
 	// Create logger based on debug flag
-	var logger types.KairosLogger
+	var logger loggerpkg.KairosLogger
 	if debug {
-		logger = types.NewKairosLogger("kcrypt-discovery-challenger", "debug", false)
+		logger = loggerpkg.NewKairosLogger("kcrypt-discovery-challenger", "debug", false)
 		logger.Debugf("Debug mode enabled for info command")
 	} else {
-		logger = types.NewKairosLogger("kcrypt-discovery-challenger", "error", false)
+		logger = loggerpkg.NewKairosLogger("kcrypt-discovery-challenger", "error", false)
 	}
 
 	// Parse PCR indices from comma-separated string
