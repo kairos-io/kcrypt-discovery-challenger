@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/mdns"
-	"github.com/kairos-io/kairos-sdk/types"
+	loggerpkg "github.com/kairos-io/kairos-sdk/types/logger"
 )
 
 const (
@@ -19,7 +19,7 @@ const (
 // queryMDNS will make an mdns query on local network to find a kcrypt challenger server
 // instance. If none is found, the original URL is returned and no additional headers.
 // If a response is received, the IP address and port from the response will be returned// and an additional "Host" header pointing to the original host.
-func queryMDNS(originalURL string, logger types.KairosLogger) (string, map[string]string, error) {
+func queryMDNS(originalURL string, logger loggerpkg.KairosLogger) (string, map[string]string, error) {
 	additionalHeaders := map[string]string{}
 
 	parsedURL, err := url.Parse(originalURL)
@@ -68,7 +68,7 @@ func queryMDNS(originalURL string, logger types.KairosLogger) (string, map[strin
 // discoverMDNSServer performs an mDNS query to discover any running kcrypt challenger
 // servers on the same network that matches the given hostname.
 // If a response if received, the IP address and the Port from the response are returned.
-func discoverMDNSServer(hostname string, logger types.KairosLogger) (string, string) {
+func discoverMDNSServer(hostname string, logger loggerpkg.KairosLogger) (string, string) {
 	// Make a channel for results and start listening
 	entriesCh := make(chan *mdns.ServiceEntry, 4)
 	defer close(entriesCh)

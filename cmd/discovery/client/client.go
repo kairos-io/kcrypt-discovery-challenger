@@ -11,7 +11,8 @@ import (
 	"github.com/kairos-io/kairos-challenger/pkg/attestation"
 	"github.com/kairos-io/kairos-sdk/kcrypt/bus"
 	"github.com/kairos-io/kairos-sdk/state"
-	"github.com/kairos-io/kairos-sdk/types"
+	loggerpkg "github.com/kairos-io/kairos-sdk/types/logger"
+	"github.com/kairos-io/kairos-sdk/types/partitions"
 	"github.com/kairos-io/tpm-helpers"
 	"github.com/mudler/go-pluggable"
 )
@@ -20,7 +21,7 @@ const (
 	NetworkRetryDelay = 1 * time.Second // delay for network/server issues
 )
 
-func NewClientWithLogger(logger types.KairosLogger) (*Client, error) {
+func NewClientWithLogger(logger loggerpkg.KairosLogger) (*Client, error) {
 	// No config loading here - config is passed via the DiscoveryPasswordPayload JSON
 	conf := newEmptyConfig()
 	return &Client{Config: conf, Logger: logger}, nil
@@ -94,7 +95,7 @@ func (c *Client) Start(eventType pluggable.EventType) error {
 
 // GetPassphrase retrieves a passphrase for the given partition - core business logic
 // ❯ echo '{ "data": "{ \\"label\\": \\"LABEL\\" }"}' | sudo -E WSS_SERVER="http://localhost:8082/challenge" ./challenger "discovery.password"
-func (c *Client) GetPassphrase(partition *types.Partition, attempts int) (string, error) {
+func (c *Client) GetPassphrase(partition *partitions.Partition, attempts int) (string, error) {
 	serverURL := c.Config.Kcrypt.Challenger.Server
 
 	// Server details are required - local passphrase storage has been moved to kairos-sdk
@@ -120,7 +121,7 @@ func (c *Client) GetPassphrase(partition *types.Partition, attempts int) (string
 }
 
 // waitPassWithTPMAttestation implements the new TPM remote attestation flow over WebSocket
-func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders map[string]string, p *types.Partition, attempts int) (string, error) {
+func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders map[string]string, p *partitions.Partition, attempts int) (string, error) {
 	attestationEndpoint := fmt.Sprintf("%s/tpm-attestation", serverURL)
 	c.Logger.Debugf("Debug: TPM attestation endpoint: %s", attestationEndpoint)
 
@@ -177,7 +178,7 @@ func (c *Client) waitPassWithTPMAttestation(serverURL string, additionalHeaders 
 
 // isLiveCDMode checks if the system is running in livecd mode
 // using kairos-sdk state detection (same as `kairos-agent state get boot`)
-func isLiveCDMode(logger types.KairosLogger) bool {
+func isLiveCDMode(logger loggerpkg.KairosLogger) bool {
 	runtime, err := state.NewRuntimeWithLogger(logger.Logger)
 	if err != nil {
 		logger.Debugf("Failed to detect runtime state, assuming not livecd: %v", err)
@@ -191,7 +192,7 @@ func isLiveCDMode(logger types.KairosLogger) bool {
 }
 
 // performTPMAttestation handles the complete attestation flow over a single WebSocket connection
-func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[string]string, attestationClient *attestation.RemoteAttestationClient, p *types.Partition) (string, error) {
+func (c *Client) performTPMAttestation(endpoint string, additionalHeaders map[string]string, attestationClient *attestation.RemoteAttestationClient, p *partitions.Partition) (string, error) {
 	c.Logger.Debugf("Debug: Creating WebSocket connection to endpoint: %s", endpoint)
 	c.Logger.Debugf("Debug: Partition details - Label: %s, Name: %s, UUID: %s", p.FilesystemLabel, p.Name, p.UUID)
 	c.Logger.Debugf("Debug: Certificate length: %d", len(c.Config.Kcrypt.Challenger.Certificate))

@@ -2,12 +2,12 @@ package client
 
 import (
 	"github.com/kairos-io/kairos-sdk/kcrypt"
-	"github.com/kairos-io/kairos-sdk/types"
+	loggerpkg "github.com/kairos-io/kairos-sdk/types/logger"
 )
 
 type Client struct {
 	Config Config
-	Logger types.KairosLogger
+	Logger loggerpkg.KairosLogger
 }
 
 type Config struct {
@@ -29,7 +29,7 @@ func newEmptyConfig() Config {
 
 // LoadConfigFromCollector loads configuration from kairos-sdk collector.
 // This scans the standard Kairos config directories and extracts kcrypt configuration.
-func LoadConfigFromCollector(logger types.KairosLogger) Config {
+func LoadConfigFromCollector(logger loggerpkg.KairosLogger) Config {
 	conf := newEmptyConfig()
 
 	kcryptConfig := kcrypt.ScanKcryptConfig(logger)
