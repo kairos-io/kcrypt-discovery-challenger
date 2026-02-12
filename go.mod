@@ -15,7 +15,7 @@ require (
 	github.com/mudler/go-processmanager v0.1.0
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.0
-	github.com/spectrocloud/peg v0.0.0-20251202090320-955ab3047839
+	github.com/spectrocloud/peg v0.0.0-20260123084329-97c9703181cf
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.27.2
