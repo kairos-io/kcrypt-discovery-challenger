@@ -53,6 +53,7 @@ envsubst \
 
 # Install the challenger server kustomization
 kubectl apply -k "$SCRIPT_DIR/../tests/assets/"
+kubectl wait --for=condition=Available deployment/kcrypt-controller-controller-manager -n default --timeout=2m
 
 # 10.0.2.2 is where the vm sees the host
 # https://stackoverflow.com/a/6752280
