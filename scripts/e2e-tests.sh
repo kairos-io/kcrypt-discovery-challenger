@@ -7,6 +7,7 @@ set -e
 
 GINKGO_NODES="${GINKGO_NODES:-1}"
 K3S_IMAGE="rancher/k3s:v1.26.1-k3s1"
+CERT_MANAGER_VERSION="v1.16.5"
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 CLUSTER_NAME=$(echo $RANDOM | md5sum | head -c 10; echo;)
@@ -39,7 +40,7 @@ k3d kubeconfig get "$CLUSTER_NAME" > "$KUBECONFIG"
 k3d image import -c "$CLUSTER_NAME" controller:latest
 
 # Install cert manager
-kubectl apply -f https://github.com/jetstack/cert-manager/releases/latest/download/cert-manager.yaml
+kubectl apply -f "https://github.com/jetstack/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml"
 kubectl wait --for=condition=Available deployment --timeout=2m -n cert-manager --all
 
 # Replace the CLUSTER_IP in the kustomize resource
@@ -52,6 +53,7 @@ envsubst \
 
 # Install the challenger server kustomization
 kubectl apply -k "$SCRIPT_DIR/../tests/assets/"
+kubectl wait --for=condition=Available deployment/kcrypt-controller-controller-manager -n default --timeout=2m
 
 # 10.0.2.2 is where the vm sees the host
 # https://stackoverflow.com/a/6752280

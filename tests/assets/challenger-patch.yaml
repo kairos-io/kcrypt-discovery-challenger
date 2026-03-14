@@ -8,6 +8,8 @@ spec:
   template:
     spec:
       containers:
+        - name: kube-rbac-proxy
+          $patch: delete
         - name: manager
           # Don't try to pull the image we built locally
           imagePullPolicy: IfNotPresent
