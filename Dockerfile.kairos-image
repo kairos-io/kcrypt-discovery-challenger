@@ -86,7 +86,7 @@ RUN touch /kairos-agent && touch /kairos-agent-status && \
 # Stage 5: Build custom Kairos base
 # renovate: datasource=github-releases depName=kairos-io/kairos
 # Note: Fedora version is hardcoded due to Docker BuildKit limitation with ARG in FROM
-FROM fedora:44 AS kairos-base
+FROM fedora:45 AS kairos-base
 
 # Build arguments
 ARG KAIROS_INIT_VERSION
