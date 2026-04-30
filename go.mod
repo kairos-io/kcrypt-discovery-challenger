@@ -9,7 +9,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/hashicorp/mdns v1.0.6
-	github.com/kairos-io/kairos-sdk v0.19.0
+	github.com/kairos-io/kairos-sdk v0.20.0
 	github.com/kairos-io/tpm-helpers v0.0.0-20251107132133-df566ad2d185
 	github.com/mudler/go-pluggable v0.0.0-20230126220627-7710299a0ae5
 	github.com/mudler/go-processmanager v0.1.1
@@ -32,8 +32,8 @@ require (
 	github.com/Masterminds/goutils v1.1.1 // indirect
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/Masterminds/sprig/v3 v3.3.0 // indirect
-	github.com/anatol/devmapper.go v0.0.0-20230829043248-59ac2b9706ba // indirect
-	github.com/anatol/luks.go v0.0.0-20250316021219-8cd744c3576f // indirect
+	github.com/anatol/devmapper.go v0.0.0-20250316020617-2671eefd35d7 // indirect
+	github.com/anatol/luks.go v0.0.0-20260315175739-98c0a50095cb // indirect
 	github.com/avast/retry-go v3.0.0+incompatible // indirect
 	github.com/aybabtme/rgbterm v0.0.0-20170906152045-cc83f3b3ce59 // indirect
 	github.com/ayoubfaouzi/pkcs7 v0.2.3 // indirect
@@ -99,7 +99,7 @@ require (
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	github.com/mudler/yip v1.23.4 // indirect
+	github.com/mudler/yip v1.23.5 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
@@ -145,9 +145,9 @@ require (
 	howett.net/plist v1.0.2-0.20250314012144-ee69052608d9 // indirect
 	k8s.io/apiextensions-apiserver v0.27.2 // indirect
 	k8s.io/component-base v0.27.2 // indirect
-	k8s.io/klog/v2 v2.130.1 // indirect
+	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20230501164219-8b0f38b5fd1f // indirect
-	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4 // indirect
+	k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.2.3 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
