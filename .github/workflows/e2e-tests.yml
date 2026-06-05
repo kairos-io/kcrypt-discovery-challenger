@@ -22,7 +22,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
       - name: Build ISO
         run: |
           make kairos-iso
@@ -57,20 +57,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: go.mod
-        continue-on-error: true
-      - name: Ensure Go toolchain on PATH
-        run: |
-          GO_VERSION="$(awk '/^go / { print $2; exit }' go.mod)"
-          GO_BIN_DIR="/opt/hostedtoolcache/go/${GO_VERSION}/x64/bin"
-          if [ ! -x "${GO_BIN_DIR}/go" ]; then
-            echo "Go ${GO_VERSION} not found at ${GO_BIN_DIR}" >&2
-            exit 1
-          fi
-          echo "${GO_BIN_DIR}" >> "${GITHUB_PATH}"
-          "${GO_BIN_DIR}/go" version
       - name: Install deps
         run: |
           curl -L https://github.com/mudler/luet/releases/download/0.33.0/luet-0.33.0-linux-amd64 -o luet
