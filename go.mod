@@ -9,8 +9,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/hashicorp/mdns v1.0.6
-	github.com/kairos-io/kairos-sdk v0.21.0
-	github.com/kairos-io/tpm-helpers v0.0.0-20251107132133-df566ad2d185
+	github.com/kairos-io/kairos-sdk v0.22.1
+	github.com/kairos-io/tpm-helpers v0.0.0-20260608091616-8a4ccb53d8f7
 	github.com/mudler/go-pluggable v0.0.0-20230126220627-7710299a0ae5
 	github.com/mudler/go-processmanager v0.1.1
 	github.com/onsi/ginkgo/v2 v2.29.0
@@ -99,7 +99,7 @@ require (
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	github.com/mudler/yip v1.23.6 // indirect
+	github.com/mudler/yip v1.24.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
@@ -112,7 +112,7 @@ require (
 	github.com/pterm/pterm v0.12.83 // indirect
 	github.com/qeesung/image2ascii v1.0.1 // indirect
 	github.com/rs/zerolog v1.35.1 // indirect
-	github.com/saferwall/pe v1.6.4 // indirect
+	github.com/saferwall/pe v1.6.5 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/spf13/afero v1.9.3 // indirect
 	github.com/spf13/cast v1.7.1 // indirect
@@ -128,7 +128,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/exp v0.0.0-20241108190413-2d47ceb2692f // indirect
-	golang.org/x/mod v0.36.0 // indirect
+	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.33.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
@@ -136,7 +136,7 @@ require (
 	golang.org/x/term v0.43.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
-	golang.org/x/tools v0.44.0 // indirect
+	golang.org/x/tools v0.45.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.3.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
