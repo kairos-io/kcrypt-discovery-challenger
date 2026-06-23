@@ -10,7 +10,7 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/hashicorp/mdns v1.0.6
 	github.com/kairos-io/kairos-sdk v0.21.0
-	github.com/kairos-io/tpm-helpers v0.0.0-20251107132133-df566ad2d185
+	github.com/kairos-io/tpm-helpers v0.0.0-20260608091616-8a4ccb53d8f7
 	github.com/mudler/go-pluggable v0.0.0-20230126220627-7710299a0ae5
 	github.com/mudler/go-processmanager v0.1.1
 	github.com/onsi/ginkgo/v2 v2.32.0
