@@ -20,7 +20,7 @@ jobs:
       OSV_SCANNER_VERSION: v2.4.0
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -30,7 +30,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Cache Go modules
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/go/pkg/mod
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
@@ -53,21 +53,25 @@ jobs:
             ./
 
       - name: Upload SARIF artifact
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && hashFiles('results.sarif') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: OSV Scanner SARIF file
           path: results.sarif
           retention-days: 5
 
       - name: Upload SARIF to code-scanning
-        if: ${{ !cancelled() }}
-        uses: github/codeql-action/upload-sarif@v4
+        if: ${{ !cancelled() && hashFiles('results.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
         with:
           sarif_file: results.sarif
 
-      - name: Fail on findings
+      - name: Report scan outcome
         if: steps.scan.outcome == 'failure'
         run: |
-          echo "osv-scanner reported vulnerabilities; see the Security tab or the results.sarif artifact."
+          if [ -f results.sarif ]; then
+            echo "osv-scanner reported vulnerabilities; see the Security tab or the results.sarif artifact."
+          else
+            echo "osv-scanner failed before writing results.sarif; see the 'Run osv-scanner' step logs."
+          fi
           exit 1
