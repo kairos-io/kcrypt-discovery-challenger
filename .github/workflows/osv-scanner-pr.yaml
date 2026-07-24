@@ -1,6 +1,5 @@
 name: OSV-Scanner PR Scan
 
-# Change "main" to your default branch if you use a different name, i.e. "master"
 on:
   pull_request:
   push:
@@ -10,12 +9,65 @@ on:
     branches: [main]
 
 permissions:
-  # Require writing security events to upload SARIF file to security tab
   security-events: write
-  # Only need to read contents adn actions
   contents: read
   actions: read
 
 jobs:
   scan-pr:
-    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.8"
+    runs-on: ubuntu-latest
+    env:
+      OSV_SCANNER_VERSION: v2.4.0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Cache Go modules
+        uses: actions/cache@v6
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install osv-scanner
+        run: |
+          go install "github.com/google/osv-scanner/v2/cmd/osv-scanner@${OSV_SCANNER_VERSION}"
+          osv-scanner --version
+
+      - name: Run osv-scanner
+        id: scan
+        continue-on-error: true
+        run: |
+          osv-scanner scan source \
+            --recursive \
+            --format=sarif \
+            --output=results.sarif \
+            ./
+
+      - name: Upload SARIF artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: OSV Scanner SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload SARIF to code-scanning
+        if: ${{ !cancelled() }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: results.sarif
+
+      - name: Fail on findings
+        if: steps.scan.outcome == 'failure'
+        run: |
+          echo "osv-scanner reported vulnerabilities; see the Security tab or the results.sarif artifact."
+          exit 1
